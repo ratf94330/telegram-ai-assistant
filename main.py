@@ -8,7 +8,7 @@ import requests
 from telegram import Bot
 import time
 
-# Your actual credentials - I'm including them directly
+# Your actual credentials
 API_ID = 26908211
 API_HASH = "6233bafd1d0ec5801b8c0e7ad0bf1aaa"
 BOT_TOKEN = "8420521879:AAFMCYFVCZBczxooABd402Gn6ojb2p3kltU"
@@ -36,7 +36,7 @@ def init_db():
     conn.close()
     print("✅ Database initialized")
 
-# Hugging Face AI Client
+# Hugging Face AI Client (Simplified)
 class FreeAIClient:
     def __init__(self, token):
         self.token = token
@@ -44,27 +44,25 @@ class FreeAIClient:
         self.summary_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
         self.headers = {"Authorization": f"Bearer {token}"}
 
-    def generate_response(self, text, conversation_history=[]):
+    def generate_response(self, text):
         try:
-            # Prepare conversation history
-            past_user_inputs = [msg["text"] for msg in conversation_history if not msg["is_bot"]][-3:]
-            generated_responses = [msg["text"] for msg in conversation_history if msg["is_bot"]][-3:]
+            # Simple prompt-based approach without complex history
+            prompt = f"User: {text}\nAI:"
             
             payload = {
-                "inputs": {
-                    "text": text,
-                    "past_user_inputs": past_user_inputs,
-                    "generated_responses": generated_responses
-                }
+                "inputs": prompt,
+                "parameters": {"max_length": 150, "temperature": 0.7}
             }
             
             response = requests.post(self.conversation_url, headers=self.headers, json=payload)
             result = response.json()
             
             if 'generated_text' in result:
-                return result['generated_text']
-            elif 'error' in result:
-                return "I'm processing your request. Please try again in a moment."
+                # Extract just the AI response part
+                full_text = result['generated_text']
+                if "AI:" in full_text:
+                    return full_text.split("AI:")[-1].strip()
+                return full_text.replace(prompt, "").strip()
             else:
                 return "Hello! I'm assisting while the account owner is offline. How can I help you?"
                 
@@ -74,8 +72,8 @@ class FreeAIClient:
 
     def summarize_conversation(self, conversation_text):
         try:
-            if len(conversation_text) > 1000:
-                conversation_text = conversation_text[:1000]
+            if len(conversation_text) > 800:
+                conversation_text = conversation_text[:800]
                 
             payload = {"inputs": conversation_text}
             
@@ -102,14 +100,20 @@ def save_message(user_id, username, message, is_bot):
     conn.commit()
     conn.close()
 
-def get_conversation_history(user_id, limit=6):
+def get_recent_conversation(user_id, limit=5):
     conn = sqlite3.connect('conversations.db')
     c = conn.cursor()
     c.execute("SELECT message, is_bot FROM conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", 
               (user_id, limit))
-    history = [{"text": row[0], "is_bot": row[1]} for row in c.fetchall()]
+    messages = c.fetchall()
     conn.close()
-    return history[::-1]  # Reverse to get chronological order
+    
+    conversation_text = ""
+    for msg, is_bot in reversed(messages):
+        sender = "AI" if is_bot else "User"
+        conversation_text += f"{sender}: {msg}\n"
+    
+    return conversation_text
 
 def update_user_status(user_id, is_online):
     conn = sqlite3.connect('conversations.db')
@@ -130,17 +134,15 @@ def is_user_online(user_id):
         return False
     
     last_online, is_online = result
-    if isinstance(last_online, str):
-        last_online = datetime.fromisoformat(last_online)
-    
-    # Consider offline if last seen > 3 minutes ago
-    if datetime.now() - last_online > timedelta(minutes=3):
+    # Consider offline if last seen > 5 minutes ago
+    if datetime.now() - datetime.fromisoformat(last_online) > timedelta(minutes=5):
         return False
     return bool(is_online)
 
-async def send_report_to_owner(conversation_text, username, user_id):
+async def send_report_to_owner(username, user_id):
     """Send conversation summary to owner via bot"""
     try:
+        conversation_text = get_recent_conversation(user_id, limit=10)
         summary = ai_client.summarize_conversation(conversation_text)
         
         report = f"""📊 *DM CONVERSATION REPORT*
@@ -148,7 +150,7 @@ async def send_report_to_owner(conversation_text, username, user_id):
 👤 *User*: {username} (ID: {user_id})
 📝 *Summary*: {summary}
 
-*Conversation:*
+*Recent Conversation:*
 {conversation_text}
 
 *Report Time*: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
@@ -171,20 +173,19 @@ async def handler(event):
     global owner_online
     
     if event.original_update.user_id == OWNER_ID:
-        user = await client.get_entity(OWNER_ID)
-        if hasattr(user, 'status'):
-            if isinstance(user.status, UserStatusOnline):
-                owner_online = True
-                update_user_status(OWNER_ID, True)
-                print("👤 Owner is ONLINE - AI won't respond to new messages")
-            elif isinstance(user.status, UserStatusOffline):
-                owner_online = False
-                update_user_status(OWNER_ID, False)
-                print("👤 Owner is OFFLINE - AI will respond to new messages")
-        else:
-            # If we can't determine status, assume offline after some time
-            owner_online = False
-            update_user_status(OWNER_ID, False)
+        try:
+            user = await client.get_entity(OWNER_ID)
+            if hasattr(user, 'status'):
+                if isinstance(user.status, UserStatusOnline):
+                    owner_online = True
+                    update_user_status(OWNER_ID, True)
+                    print("👤 Owner is ONLINE - AI won't respond to new messages")
+                elif isinstance(user.status, UserStatusOffline):
+                    owner_online = False
+                    update_user_status(OWNER_ID, False)
+                    print("👤 Owner is OFFLINE - AI will respond to new messages")
+        except Exception as e:
+            print(f"❌ Error checking owner status: {e}")
 
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def handle_incoming_message(event):
@@ -210,11 +211,8 @@ async def handle_incoming_message(event):
     # Save incoming message
     save_message(event.sender_id, username, message_text, False)
     
-    # Get conversation history
-    history = get_conversation_history(event.sender_id)
-    
     # Generate AI response
-    ai_response = ai_client.generate_response(message_text, history)
+    ai_response = ai_client.generate_response(message_text)
     
     # Send response with different formatting
     await event.reply(f"`{ai_response}`", parse_mode='markdown')
@@ -222,16 +220,9 @@ async def handle_incoming_message(event):
     # Save AI response
     save_message(event.sender_id, username, ai_response, True)
     
-    # Prepare conversation for reporting
-    full_history = get_conversation_history(event.sender_id, limit=10)
-    conversation_text = "\n".join([
-        f"{'🤖 AI' if msg['is_bot'] else '👤 User'}: {msg['text']}" 
-        for msg in full_history
-    ])
-    
-    # Send report to owner (only if conversation has multiple messages)
-    if len(full_history) >= 2:
-        await send_report_to_owner(conversation_text, username, event.sender_id)
+    # Send report to owner after a short conversation
+    await asyncio.sleep(2)
+    await send_report_to_owner(username, event.sender_id)
 
 async def main():
     # Initialize database
@@ -245,17 +236,10 @@ async def main():
         me = await client.get_me()
         print(f"✅ Logged in as: {me.first_name} (ID: {me.id})")
         
-        # Check initial online status
-        user = await client.get_entity(OWNER_ID)
-        if hasattr(user, 'status'):
-            if isinstance(user.status, UserStatusOnline):
-                owner_online = True
-                print("👤 Initial status: ONLINE")
-            else:
-                owner_online = False
-                print("👤 Initial status: OFFLINE")
-        
-        update_user_status(OWNER_ID, owner_online)
+        # Set initial status to offline (safe assumption)
+        owner_online = False
+        update_user_status(OWNER_ID, False)
+        print("👤 Initial status: OFFLINE (AI will respond to messages)")
         
     except Exception as e:
         print(f"❌ Error getting user info: {e}")
