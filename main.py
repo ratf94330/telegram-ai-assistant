@@ -1,12 +1,12 @@
 import os
 import asyncio
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.tl.types import User, UserStatusOnline, UserStatusOffline
 import requests
 from telegram import Bot
-import time
 
 # Your actual credentials
 API_ID = 26908211
@@ -14,6 +14,9 @@ API_HASH = "6233bafd1d0ec5801b8c0e7ad0bf1aaa"
 BOT_TOKEN = "8420521879:AAFMCYFVCZBczxooABd402Gn6ojb2p3kltU"
 HUGGINGFACE_TOKEN = "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"
 OWNER_ID = 1723764689
+
+# String session from environment variable
+STRING_SESSION = os.environ.get('STRING_SESSION', '')
 
 print("🤖 Starting AI Assistant for your personal Telegram account...")
 
@@ -28,10 +31,6 @@ def init_db():
                   message TEXT, 
                   is_bot BOOLEAN, 
                   timestamp DATETIME)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS user_status
-                 (user_id INTEGER PRIMARY KEY, 
-                  last_online DATETIME, 
-                  is_online BOOLEAN)''')
     conn.commit()
     conn.close()
     print("✅ Database initialized")
@@ -113,14 +112,6 @@ def get_recent_conversation(user_id, limit=5):
     
     return conversation_text
 
-def update_user_status(user_id, is_online):
-    conn = sqlite3.connect('conversations.db')
-    c = conn.cursor()
-    c.execute("REPLACE INTO user_status VALUES (?, ?, ?)", 
-              (user_id, datetime.now(), is_online))
-    conn.commit()
-    conn.close()
-
 async def send_report_to_owner(username, user_id):
     """Send conversation summary to owner via bot"""
     try:
@@ -143,11 +134,8 @@ async def send_report_to_owner(username, user_id):
     except Exception as e:
         print(f"❌ Error sending report: {e}")
 
-# Create a unique session name for Railway
-session_name = f"railway_session_{OWNER_ID}"
-
-# Telegram Client for your personal account
-client = TelegramClient(session_name, API_ID, API_HASH)
+# Create Telegram client with string session
+client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def handle_incoming_message(event):
@@ -163,9 +151,7 @@ async def handle_incoming_message(event):
     
     print(f"📩 New message from {username}: {message_text[:50]}...")
     
-    # SIMPLIFIED: Always respond (we'll improve online detection later)
-    # For now, we'll assume you're offline when the bot is running
-    
+    # For now, respond to all messages (we'll add online detection later)
     print(f"   🤖 AI responding to {username}")
     
     # Save incoming message
@@ -188,7 +174,12 @@ async def main():
     # Initialize database
     init_db()
     
-    print("🔑 Starting Telegram client...")
+    print("🔑 Starting Telegram client with string session...")
+    
+    if not STRING_SESSION:
+        print("❌ ERROR: STRING_SESSION environment variable is not set!")
+        print("💡 Run get_string_session.py locally and add the string to Railway environment variables")
+        return
     
     try:
         # Start the client
@@ -197,14 +188,11 @@ async def main():
         # Get user info
         me = await client.get_me()
         print(f"✅ Logged in as: {me.first_name} (ID: {me.id})")
-        
-        # Set initial status
-        update_user_status(OWNER_ID, False)
         print("👤 Bot is running and will respond to messages")
         
     except Exception as e:
         print(f"❌ Error starting client: {e}")
-        print("💡 If you see 'AuthKeyDuplicatedError', wait a few minutes and restart")
+        print("💡 The string session might be invalid. Generate a new one.")
         return
     
     print("\n" + "="*50)
@@ -214,13 +202,7 @@ async def main():
     print("="*50 + "\n")
     
     # Keep running
-    try:
-        await client.run_until_disconnected()
-    except Exception as e:
-        print(f"❌ Client disconnected: {e}")
-        print("🔄 Restarting in 10 seconds...")
-        await asyncio.sleep(10)
-        await main()
+    await client.run_until_disconnected()
 
 if __name__ == '__main__':
     asyncio.run(main())
