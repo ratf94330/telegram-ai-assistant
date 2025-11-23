@@ -6,7 +6,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 import requests
 from telegram import Bot
-import json
+import random
 
 # Your actual credentials
 API_ID = 26908211
@@ -35,111 +35,152 @@ def init_db():
     conn.close()
     print("✅ Database initialized")
 
-# Improved Hugging Face AI Client
-class FreeAIClient:
+# Improved AI Client with better fallbacks
+class AIClient:
     def __init__(self, token):
         self.token = token
-        self.conversation_url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
-        self.summary_url = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+        # Updated Hugging Face endpoints
+        self.conversation_url = "https://router.huggingface.co/models/microsoft/DialoGPT-medium"
+        self.summary_url = "https://router.huggingface.co/models/facebook/bart-large-cnn"
         self.headers = {"Authorization": f"Bearer {token}"}
 
     def generate_response(self, text):
         try:
-            # More natural conversation prompt
-            prompt = f"The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.\n\nHuman: {text}\nAI:"
+            # Try the new Hugging Face endpoint first
+            prompt = f"User: {text}\nAI:"
             
             payload = {
                 "inputs": prompt,
                 "parameters": {
-                    "max_length": 100,
-                    "temperature": 0.9,
-                    "do_sample": True,
-                    "top_p": 0.95,
-                    "repetition_penalty": 1.1
+                    "max_length": 80,
+                    "temperature": 0.8,
+                    "do_sample": True
                 }
             }
             
-            print(f"🤖 Sending request to Hugging Face...")
-            response = requests.post(self.conversation_url, headers=self.headers, json=payload, timeout=30)
+            print(f"🤖 Trying new Hugging Face endpoint...")
+            response = requests.post(self.conversation_url, headers=self.headers, json=payload, timeout=15)
             print(f"🤖 Response status: {response.status_code}")
             
-            result = response.json()
-            print(f"🤖 Raw API response: {result}")
+            if response.status_code == 200:
+                result = response.json()
+                print(f"🤖 API response: {result}")
+                
+                if isinstance(result, list) and len(result) > 0:
+                    if 'generated_text' in result[0]:
+                        full_text = result[0]['generated_text']
+                        if "AI:" in full_text:
+                            ai_response = full_text.split("AI:")[-1].strip()
+                            # Clean up the response
+                            if "User:" in ai_response:
+                                ai_response = ai_response.split("User:")[0].strip()
+                            return ai_response
             
-            if response.status_code == 503:
-                return "I'm currently warming up. Please try again in a moment!"
-            
-            if isinstance(result, list) and len(result) > 0:
-                if 'generated_text' in result[0]:
-                    full_text = result[0]['generated_text']
-                    # Extract the AI response part
-                    if "AI:" in full_text:
-                        ai_part = full_text.split("AI:")[-1].strip()
-                        # Clean up any remaining Human: parts
-                        if "Human:" in ai_part:
-                            ai_part = ai_part.split("Human:")[0].strip()
-                        return ai_part if ai_part else "Hey there! What's on your mind?"
-                    return full_text.replace(prompt, "").strip() or "Hey! How can I help you today?"
-            
-            # If we get here, try a simpler approach
-            return self.get_fallback_response(text)
+            # If Hugging Face fails, use our smart fallback
+            return self.get_smart_response(text)
                 
         except Exception as e:
-            print(f"❌ AI Error: {e}")
-            return self.get_fallback_response(text)
+            print(f"❌ API Error: {e}")
+            return self.get_smart_response(text)
 
-    def get_fallback_response(self, text):
-        """Generate context-aware fallback responses"""
-        text_lower = text.lower().strip()
+    def get_smart_response(self, user_message):
+        """Generate intelligent, context-aware responses without API"""
+        message = user_message.lower().strip()
         
         # Greetings
-        if any(word in text_lower for word in ['hi', 'hello', 'hey', 'sup', 'wassup', 'waruup']):
-            return "Hey there! 👋 How's your day going?"
+        greetings = ['hi', 'hello', 'hey', 'sup', 'wassup', 'waruup', 'yo', 'hola']
+        if any(greet in message for greet in greetings):
+            return random.choice([
+                "Hey there! 👋 How's your day going?",
+                "Hello! Nice to hear from you!",
+                "Hi! What's on your mind today?",
+                "Hey! How can I help you? 😊"
+            ])
         
         # How are you
-        elif any(phrase in text_lower for phrase in ['how are you', 'how you', "what's up"]):
-            return "I'm doing great! Just here to chat while my owner is away. What about you?"
+        if any(phrase in message for phrase in ['how are you', 'how you', "what's up", 'how do you do']):
+            return random.choice([
+                "I'm doing great! Just here to chat. How about you?",
+                "All good on my end! What's new with you?",
+                "I'm functioning perfectly! How are things with you?",
+                "Doing well, thanks for asking! How's your day going?"
+            ])
         
-        # Questions
-        elif '?' in text:
-            return "That's an interesting question! I'm still learning, but I'd love to hear your thoughts on it."
+        # Questions about AI/identity
+        if any(phrase in message for phrase in ['are you ai', 'are you a robot', 'are you bot', 'who are you']):
+            return random.choice([
+                "I'm an AI assistant helping out while my owner is away! 🤖",
+                "Yep, I'm an AI! Just keeping the conversations flowing.",
+                "I'm an automated assistant chatting with you right now!",
+                "That's right! I'm an AI helping with messages."
+            ])
+        
+        # Questions about owner
+        if any(phrase in message for phrase in ['owner', 'where is', 'when will', 'is he', 'is she']):
+            return random.choice([
+                "The account owner is currently unavailable, but I'm here to help!",
+                "They're away at the moment, but I can assist you with anything.",
+                "I'm handling messages while they're offline. What can I help with?",
+                "They're not available right now, but I'd be happy to chat!"
+            ])
+        
+        # Jokes
+        if 'joke' in message:
+            jokes = [
+                "Why don't scientists trust atoms? Because they make up everything!",
+                "Why did the scarecrow win an award? He was outstanding in his field!",
+                "What do you call a fake noodle? An impasta!",
+                "Why did the math book look so sad? Because it had too many problems!"
+            ]
+            return random.choice(jokes)
+        
+        # Help/questions
+        if '?' in message:
+            return random.choice([
+                "That's an interesting question! What are your thoughts on it?",
+                "I'm still learning about that topic. What do you think?",
+                "That's a great question! I'd love to hear your perspective.",
+                "I'm not entirely sure about that one. Maybe we can explore it together?"
+            ])
         
         # Short messages
-        elif len(text) < 3:
-            return "I see you're keeping it short! 😄 What's on your mind?"
+        if len(message) <= 2:
+            return random.choice([
+                "I see you're keeping it brief! 😄",
+                "Short and sweet! What's on your mind?",
+                "Got it! Anything else you'd like to talk about?",
+                "👍 What's new with you?"
+            ])
         
-        # Default friendly response
-        else:
-            responses = [
-                "That's interesting! Tell me more about that.",
-                "I appreciate you sharing that with me!",
-                "What do you think about that?",
-                "That's really cool! I'd love to hear more.",
-                "Thanks for the message! What's been on your mind lately?"
-            ]
-            import random
-            return random.choice(responses)
+        # Confusion/negative
+        if any(word in message for word in ['huh', 'what', 'weird', 'strange', 'confused']):
+            return random.choice([
+                "Sorry if I confused you! Let me know what you meant.",
+                "My apologies! Could you rephrase that?",
+                "I think I misunderstood. What were you saying?",
+                "Let's try that again! What did you mean?"
+            ])
+        
+        # Default positive responses
+        positive_responses = [
+            "That's really interesting! Tell me more about that.",
+            "I appreciate you sharing that! What's been on your mind lately?",
+            "That's cool! I'd love to hear more about your thoughts.",
+            "Thanks for the message! What else is going on with you?",
+            "That's fascinating! How do you feel about that?",
+            "I like that perspective! What made you think of it?"
+        ]
+        return random.choice(positive_responses)
 
     def summarize_conversation(self, conversation_text):
-        try:
-            if len(conversation_text) > 500:
-                conversation_text = conversation_text[:500]
-                
-            payload = {"inputs": conversation_text}
-            
-            response = requests.post(self.summary_url, headers=self.headers, json=payload, timeout=30)
-            result = response.json()
-            
-            if isinstance(result, list) and len(result) > 0 and 'summary_text' in result[0]:
-                return result[0]['summary_text']
-            return "Had a friendly conversation."
-            
-        except Exception as e:
-            print(f"❌ Summary Error: {e}")
-            return "Friendly chat completed."
+        # Simple summary since Hugging Face might not work
+        lines = conversation_text.split('\n')
+        if len(lines) >= 4:
+            return f"Conversation with {len(lines)//2} messages about various topics"
+        return "Short conversation exchange"
 
 # Initialize AI client
-ai_client = FreeAIClient(HUGGINGFACE_TOKEN)
+ai_client = AIClient(HUGGINGFACE_TOKEN)
 print("✅ AI Client initialized")
 
 def save_message(user_id, username, message, is_bot):
@@ -150,7 +191,7 @@ def save_message(user_id, username, message, is_bot):
     conn.commit()
     conn.close()
 
-def get_recent_conversation(user_id, limit=5):
+def get_recent_conversation(user_id, limit=6):
     conn = sqlite3.connect('conversations.db')
     c = conn.cursor()
     c.execute("SELECT message, is_bot FROM conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", 
@@ -160,32 +201,33 @@ def get_recent_conversation(user_id, limit=5):
     
     conversation_text = ""
     for msg, is_bot in reversed(messages):
-        sender = "AI" if is_bot else "User"
-        conversation_text += f"{sender}: {msg}\n"
+        sender = "🤖 AI" if is_bot else "👤 User"
+        # Escape Markdown characters
+        safe_msg = msg.replace('*', '\\*').replace('_', '\\_').replace('`', '\\`').replace('[', '\\[')
+        conversation_text += f"{sender}: {safe_msg}\n"
     
     return conversation_text
 
 async def send_report_to_owner(username, user_id):
     """Send conversation summary to owner via bot"""
     try:
-        conversation_text = get_recent_conversation(user_id, limit=10)
+        conversation_text = get_recent_conversation(user_id, limit=8)
         summary = ai_client.summarize_conversation(conversation_text)
         
-        # Fix Markdown formatting by escaping special characters
-        safe_conversation = conversation_text.replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
-        
-        report = f"""📊 *DM CONVERSATION REPORT*
+        # Create report without Markdown to avoid parsing errors
+        report = f"""📊 DM CONVERSATION REPORT
 
-👤 *User*: {username} (ID: {user_id})
-📝 *Summary*: {summary}
+👤 User: {username} (ID: {user_id})
+📝 Summary: {summary}
 
-*Recent Conversation:*
-{safe_conversation}
+Recent Conversation:
+{conversation_text}
 
-*Report Time*: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+Report Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
         
         bot = Bot(token=BOT_TOKEN)
-        await bot.send_message(chat_id=OWNER_ID, text=report, parse_mode='Markdown')
+        # Send without Markdown parsing
+        await bot.send_message(chat_id=OWNER_ID, text=report)
         print(f"✅ Report sent to owner for conversation with {username}")
     except Exception as e:
         print(f"❌ Error sending report: {e}")
@@ -207,7 +249,7 @@ async def handle_incoming_message(event):
     
     print(f"📩 New message from {username}: {message_text}")
     
-    # For now, respond to all messages
+    # Respond to all messages for now
     print(f"   🤖 AI responding to {username}")
     
     # Save incoming message
@@ -218,14 +260,14 @@ async def handle_incoming_message(event):
     
     print(f"   💬 AI says: {ai_response}")
     
-    # Send response with different formatting
+    # Send response with code formatting
     await event.reply(f"`{ai_response}`", parse_mode='markdown')
     
     # Save AI response
     save_message(event.sender_id, username, ai_response, True)
     
     # Send report to owner
-    await asyncio.sleep(2)
+    await asyncio.sleep(1)
     await send_report_to_owner(username, event.sender_id)
 
 async def main():
