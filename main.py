@@ -36,7 +36,7 @@ def init_db():
     conn.close()
     print("✅ Database initialized")
 
-# Hugging Face AI Client (Simplified)
+# Hugging Face AI Client
 class FreeAIClient:
     def __init__(self, token):
         self.token = token
@@ -46,7 +46,6 @@ class FreeAIClient:
 
     def generate_response(self, text):
         try:
-            # Simple prompt-based approach without complex history
             prompt = f"User: {text}\nAI:"
             
             payload = {
@@ -58,7 +57,6 @@ class FreeAIClient:
             result = response.json()
             
             if 'generated_text' in result:
-                # Extract just the AI response part
                 full_text = result['generated_text']
                 if "AI:" in full_text:
                     return full_text.split("AI:")[-1].strip()
@@ -123,22 +121,6 @@ def update_user_status(user_id, is_online):
     conn.commit()
     conn.close()
 
-def is_user_online(user_id):
-    conn = sqlite3.connect('conversations.db')
-    c = conn.cursor()
-    c.execute("SELECT last_online, is_online FROM user_status WHERE user_id = ?", (user_id,))
-    result = c.fetchone()
-    conn.close()
-    
-    if not result:
-        return False
-    
-    last_online, is_online = result
-    # Consider offline if last seen > 5 minutes ago
-    if datetime.now() - datetime.fromisoformat(last_online) > timedelta(minutes=5):
-        return False
-    return bool(is_online)
-
 async def send_report_to_owner(username, user_id):
     """Send conversation summary to owner via bot"""
     try:
@@ -161,31 +143,11 @@ async def send_report_to_owner(username, user_id):
     except Exception as e:
         print(f"❌ Error sending report: {e}")
 
-# Track owner online status
-owner_online = False
+# Create a unique session name for Railway
+session_name = f"railway_session_{OWNER_ID}"
 
 # Telegram Client for your personal account
-client = TelegramClient('user_session', API_ID, API_HASH)
-
-@client.on(events.UserUpdate)
-async def handler(event):
-    """Track when you come online/offline"""
-    global owner_online
-    
-    if event.original_update.user_id == OWNER_ID:
-        try:
-            user = await client.get_entity(OWNER_ID)
-            if hasattr(user, 'status'):
-                if isinstance(user.status, UserStatusOnline):
-                    owner_online = True
-                    update_user_status(OWNER_ID, True)
-                    print("👤 Owner is ONLINE - AI won't respond to new messages")
-                elif isinstance(user.status, UserStatusOffline):
-                    owner_online = False
-                    update_user_status(OWNER_ID, False)
-                    print("👤 Owner is OFFLINE - AI will respond to new messages")
-        except Exception as e:
-            print(f"❌ Error checking owner status: {e}")
+client = TelegramClient(session_name, API_ID, API_HASH)
 
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def handle_incoming_message(event):
@@ -201,12 +163,10 @@ async def handle_incoming_message(event):
     
     print(f"📩 New message from {username}: {message_text[:50]}...")
     
-    # Check if owner is online
-    if owner_online:
-        print(f"   ⏸️ Owner is online - ignoring message from {username}")
-        return
+    # SIMPLIFIED: Always respond (we'll improve online detection later)
+    # For now, we'll assume you're offline when the bot is running
     
-    print(f"   🤖 Owner is offline - AI responding to {username}")
+    print(f"   🤖 AI responding to {username}")
     
     # Save incoming message
     save_message(event.sender_id, username, message_text, False)
@@ -220,7 +180,7 @@ async def handle_incoming_message(event):
     # Save AI response
     save_message(event.sender_id, username, ai_response, True)
     
-    # Send report to owner after a short conversation
+    # Send report to owner
     await asyncio.sleep(2)
     await send_report_to_owner(username, event.sender_id)
 
@@ -228,31 +188,39 @@ async def main():
     # Initialize database
     init_db()
     
-    # Start the client
-    await client.start()
+    print("🔑 Starting Telegram client...")
     
-    # Get initial owner status
     try:
+        # Start the client
+        await client.start()
+        
+        # Get user info
         me = await client.get_me()
         print(f"✅ Logged in as: {me.first_name} (ID: {me.id})")
         
-        # Set initial status to offline (safe assumption)
-        owner_online = False
+        # Set initial status
         update_user_status(OWNER_ID, False)
-        print("👤 Initial status: OFFLINE (AI will respond to messages)")
+        print("👤 Bot is running and will respond to messages")
         
     except Exception as e:
-        print(f"❌ Error getting user info: {e}")
+        print(f"❌ Error starting client: {e}")
+        print("💡 If you see 'AuthKeyDuplicatedError', wait a few minutes and restart")
+        return
     
     print("\n" + "="*50)
     print("🤖 AI Assistant ACTIVE for your personal Telegram!")
-    print("📱 Monitoring your online status...")
-    print("💬 AI will respond to DMs when you're offline")
+    print("💬 AI will respond to DMs")
     print("📊 You'll receive summaries via @Dr_assistbot")
     print("="*50 + "\n")
     
     # Keep running
-    await client.run_until_disconnected()
+    try:
+        await client.run_until_disconnected()
+    except Exception as e:
+        print(f"❌ Client disconnected: {e}")
+        print("🔄 Restarting in 10 seconds...")
+        await asyncio.sleep(10)
+        await main()
 
 if __name__ == '__main__':
     asyncio.run(main())
