@@ -4,9 +4,9 @@ import sqlite3
 from datetime import datetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import User, UserStatusOnline, UserStatusOffline
 import requests
 from telegram import Bot
+import json
 
 # Your actual credentials
 API_ID = 26908211
@@ -35,7 +35,7 @@ def init_db():
     conn.close()
     print("✅ Database initialized")
 
-# Hugging Face AI Client
+# Improved Hugging Face AI Client
 class FreeAIClient:
     def __init__(self, token):
         self.token = token
@@ -45,45 +45,98 @@ class FreeAIClient:
 
     def generate_response(self, text):
         try:
-            prompt = f"User: {text}\nAI:"
+            # More natural conversation prompt
+            prompt = f"The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.\n\nHuman: {text}\nAI:"
             
             payload = {
                 "inputs": prompt,
-                "parameters": {"max_length": 150, "temperature": 0.7}
+                "parameters": {
+                    "max_length": 100,
+                    "temperature": 0.9,
+                    "do_sample": True,
+                    "top_p": 0.95,
+                    "repetition_penalty": 1.1
+                }
             }
             
-            response = requests.post(self.conversation_url, headers=self.headers, json=payload)
-            result = response.json()
+            print(f"🤖 Sending request to Hugging Face...")
+            response = requests.post(self.conversation_url, headers=self.headers, json=payload, timeout=30)
+            print(f"🤖 Response status: {response.status_code}")
             
-            if 'generated_text' in result:
-                full_text = result['generated_text']
-                if "AI:" in full_text:
-                    return full_text.split("AI:")[-1].strip()
-                return full_text.replace(prompt, "").strip()
-            else:
-                return "Hello! I'm assisting while the account owner is offline. How can I help you?"
+            result = response.json()
+            print(f"🤖 Raw API response: {result}")
+            
+            if response.status_code == 503:
+                return "I'm currently warming up. Please try again in a moment!"
+            
+            if isinstance(result, list) and len(result) > 0:
+                if 'generated_text' in result[0]:
+                    full_text = result[0]['generated_text']
+                    # Extract the AI response part
+                    if "AI:" in full_text:
+                        ai_part = full_text.split("AI:")[-1].strip()
+                        # Clean up any remaining Human: parts
+                        if "Human:" in ai_part:
+                            ai_part = ai_part.split("Human:")[0].strip()
+                        return ai_part if ai_part else "Hey there! What's on your mind?"
+                    return full_text.replace(prompt, "").strip() or "Hey! How can I help you today?"
+            
+            # If we get here, try a simpler approach
+            return self.get_fallback_response(text)
                 
         except Exception as e:
             print(f"❌ AI Error: {e}")
-            return "I'm here to assist you! What would you like to talk about?"
+            return self.get_fallback_response(text)
+
+    def get_fallback_response(self, text):
+        """Generate context-aware fallback responses"""
+        text_lower = text.lower().strip()
+        
+        # Greetings
+        if any(word in text_lower for word in ['hi', 'hello', 'hey', 'sup', 'wassup', 'waruup']):
+            return "Hey there! 👋 How's your day going?"
+        
+        # How are you
+        elif any(phrase in text_lower for phrase in ['how are you', 'how you', "what's up"]):
+            return "I'm doing great! Just here to chat while my owner is away. What about you?"
+        
+        # Questions
+        elif '?' in text:
+            return "That's an interesting question! I'm still learning, but I'd love to hear your thoughts on it."
+        
+        # Short messages
+        elif len(text) < 3:
+            return "I see you're keeping it short! 😄 What's on your mind?"
+        
+        # Default friendly response
+        else:
+            responses = [
+                "That's interesting! Tell me more about that.",
+                "I appreciate you sharing that with me!",
+                "What do you think about that?",
+                "That's really cool! I'd love to hear more.",
+                "Thanks for the message! What's been on your mind lately?"
+            ]
+            import random
+            return random.choice(responses)
 
     def summarize_conversation(self, conversation_text):
         try:
-            if len(conversation_text) > 800:
-                conversation_text = conversation_text[:800]
+            if len(conversation_text) > 500:
+                conversation_text = conversation_text[:500]
                 
             payload = {"inputs": conversation_text}
             
-            response = requests.post(self.summary_url, headers=self.headers, json=payload)
+            response = requests.post(self.summary_url, headers=self.headers, json=payload, timeout=30)
             result = response.json()
             
             if isinstance(result, list) and len(result) > 0 and 'summary_text' in result[0]:
                 return result[0]['summary_text']
-            return "Conversation completed."
+            return "Had a friendly conversation."
             
         except Exception as e:
             print(f"❌ Summary Error: {e}")
-            return "Conversation ended."
+            return "Friendly chat completed."
 
 # Initialize AI client
 ai_client = FreeAIClient(HUGGINGFACE_TOKEN)
@@ -93,7 +146,7 @@ def save_message(user_id, username, message, is_bot):
     conn = sqlite3.connect('conversations.db')
     c = conn.cursor()
     c.execute("INSERT INTO conversations (user_id, username, message, is_bot, timestamp) VALUES (?, ?, ?, ?, ?)",
-              (user_id, username, message, is_bot, datetime.now()))
+              (user_id, username, message, is_bot, datetime.now().isoformat()))
     conn.commit()
     conn.close()
 
@@ -118,13 +171,16 @@ async def send_report_to_owner(username, user_id):
         conversation_text = get_recent_conversation(user_id, limit=10)
         summary = ai_client.summarize_conversation(conversation_text)
         
+        # Fix Markdown formatting by escaping special characters
+        safe_conversation = conversation_text.replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
+        
         report = f"""📊 *DM CONVERSATION REPORT*
 
 👤 *User*: {username} (ID: {user_id})
 📝 *Summary*: {summary}
 
 *Recent Conversation:*
-{conversation_text}
+{safe_conversation}
 
 *Report Time*: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
         
@@ -149,9 +205,9 @@ async def handle_incoming_message(event):
     username = user.username or user.first_name or f"User{event.sender_id}"
     message_text = event.message.text
     
-    print(f"📩 New message from {username}: {message_text[:50]}...")
+    print(f"📩 New message from {username}: {message_text}")
     
-    # For now, respond to all messages (we'll add online detection later)
+    # For now, respond to all messages
     print(f"   🤖 AI responding to {username}")
     
     # Save incoming message
@@ -159,6 +215,8 @@ async def handle_incoming_message(event):
     
     # Generate AI response
     ai_response = ai_client.generate_response(message_text)
+    
+    print(f"   💬 AI says: {ai_response}")
     
     # Send response with different formatting
     await event.reply(f"`{ai_response}`", parse_mode='markdown')
@@ -178,7 +236,6 @@ async def main():
     
     if not STRING_SESSION:
         print("❌ ERROR: STRING_SESSION environment variable is not set!")
-        print("💡 Run get_string_session.py locally and add the string to Railway environment variables")
         return
     
     try:
@@ -192,7 +249,6 @@ async def main():
         
     except Exception as e:
         print(f"❌ Error starting client: {e}")
-        print("💡 The string session might be invalid. Generate a new one.")
         return
     
     print("\n" + "="*50)
