@@ -12,13 +12,20 @@ from telegram import Bot
 API_ID = 26908211
 API_HASH = "6233bafd1d0ec5801b8c0e7ad0bf1aaa"
 BOT_TOKEN = "8420521879:AAFMCYFVCZBczxooABd402Gn6ojb2p3kltU"
-GEMINI_API_KEY = "your_gemini_api_key_here"  # You'll get this in step 11.1
 OWNER_ID = 1723764689
 
-# String session from environment variable
+# Get API keys from environment variables
 STRING_SESSION = os.environ.get('STRING_SESSION', '')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 print("🤖 Starting AI Assistant for your personal Telegram account...")
+
+# Check if required keys are set
+if not GEMINI_API_KEY:
+    print("❌ ERROR: GEMINI_API_KEY environment variable is not set!")
+    print("💡 Please add your Gemini API key to Railway variables")
+if not STRING_SESSION:
+    print("❌ ERROR: STRING_SESSION environment variable is not set!")
 
 # Initialize database
 def init_db():
@@ -252,6 +259,10 @@ async def main():
     
     if not STRING_SESSION:
         print("❌ ERROR: STRING_SESSION environment variable is not set!")
+        return
+    
+    if not GEMINI_API_KEY:
+        print("❌ ERROR: GEMINI_API_KEY environment variable is not set!")
         return
     
     try:
