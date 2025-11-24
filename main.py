@@ -35,11 +35,12 @@ def init_db():
     conn.close()
     print("✅ Database initialized")
 
-# Fixed Google Gemini AI Client
+# Fixed Google Gemini AI Client with correct model
 class GeminiAIClient:
     def __init__(self, api_key):
         self.api_key = api_key
-        self.url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+        # Use the correct Gemini model - gemini-1.5-flash
+        self.url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
         self.headers = {"Content-Type": "application/json"}
         
         # Store conversation history per user
@@ -69,17 +70,17 @@ AI:"""
                     "temperature": 0.8,
                     "topK": 40,
                     "topP": 0.95,
-                    "maxOutputTokens": 120,
+                    "maxOutputTokens": 150,
                 }
             }
             
-            print(f"🤖 Calling Gemini API...")
+            print(f"🤖 Calling Gemini API with gemini-1.5-flash model...")
             response = requests.post(self.url, headers=self.headers, json=payload, timeout=15)
             print(f"🤖 API Status: {response.status_code}")
             
             if response.status_code == 200:
                 result = response.json()
-                print(f"🤖 API Response: {result}")
+                print(f"🤖 API Response received successfully")
                 
                 if 'candidates' in result and result['candidates']:
                     if 'content' in result['candidates'][0]:
@@ -95,15 +96,15 @@ AI:"""
                         
                         return ai_response
                 else:
-                    print(f"❌ No candidates in response: {result}")
+                    print(f"❌ No candidates in response")
+                    return self.get_smart_fallback(user_message)
             else:
                 print(f"❌ API Error {response.status_code}: {response.text}")
+                return self.get_smart_fallback(user_message)
                 
         except Exception as e:
             print(f"❌ Gemini API Exception: {str(e)}")
-        
-        # If we get here, use smart fallback
-        return self.get_smart_fallback(user_message)
+            return self.get_smart_fallback(user_message)
 
     def get_smart_fallback(self, user_message):
         """Context-aware fallback responses"""
@@ -128,6 +129,10 @@ AI:"""
         
         elif 'you ai' in message or 'you bot' in message:
             return "Yes, I'm an AI! 🤖 I'm handling messages while the account owner is unavailable."
+        
+        # Specific questions
+        elif 'donald trump' in message:
+            return "Donald Trump is a former US President and businessman. He was the 45th president from 2017 to 2021."
         
         elif '?' in message:
             if 'name' in message:
@@ -276,7 +281,7 @@ async def main():
     
     print("\n" + "="*50)
     print("🤖 AI Assistant ACTIVE for your personal Telegram!")
-    print("💬 Using Google Gemini AI for intelligent responses")
+    print("💬 Using Google Gemini 1.5 Flash AI for intelligent responses")
     print("📊 You'll receive summaries via @Dr_assistbot")
     print("="*50 + "\n")
     
