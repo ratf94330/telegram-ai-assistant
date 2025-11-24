@@ -20,13 +20,6 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 print("🤖 Starting AI Assistant for your personal Telegram account...")
 
-# Check if required keys are set
-if not GEMINI_API_KEY:
-    print("❌ ERROR: GEMINI_API_KEY environment variable is not set!")
-    print("💡 Please add your Gemini API key to Railway variables")
-if not STRING_SESSION:
-    print("❌ ERROR: STRING_SESSION environment variable is not set!")
-
 # Initialize database
 def init_db():
     conn = sqlite3.connect('conversations.db')
@@ -42,7 +35,7 @@ def init_db():
     conn.close()
     print("✅ Database initialized")
 
-# Google Gemini AI Client (RELIABLE)
+# Fixed Google Gemini AI Client
 class GeminiAIClient:
     def __init__(self, api_key):
         self.api_key = api_key
@@ -58,18 +51,13 @@ class GeminiAIClient:
             if user_id not in self.conversations:
                 self.conversations[user_id] = []
             
-            conversation_history = self.conversations[user_id][-6:]  # Last 3 exchanges
+            # Build the conversation context
+            history_text = "\n".join(self.conversations[user_id][-4:])  # Last 2 exchanges
             
-            # Build conversation context
-            conversation_text = ""
-            for msg in conversation_history:
-                conversation_text += f"{msg}\n"
-            
-            prompt = f"""You are a helpful AI assistant responding to messages for someone who is offline. 
+            prompt = f"""You are a helpful AI assistant responding to Telegram messages when the account owner is offline. 
 Keep responses friendly, conversational, and helpful. Be concise but engaging.
 
-Recent conversation:
-{conversation_text}
+{history_text}
 User: {user_message}
 AI:"""
             
@@ -78,75 +66,86 @@ AI:"""
                     "parts": [{"text": prompt}]
                 }],
                 "generationConfig": {
-                    "temperature": 0.7,
+                    "temperature": 0.8,
                     "topK": 40,
                     "topP": 0.95,
-                    "maxOutputTokens": 150,
+                    "maxOutputTokens": 120,
                 }
             }
             
             print(f"🤖 Calling Gemini API...")
-            response = requests.post(self.url, headers=self.headers, json=payload, timeout=10)
+            response = requests.post(self.url, headers=self.headers, json=payload, timeout=15)
+            print(f"🤖 API Status: {response.status_code}")
             
             if response.status_code == 200:
                 result = response.json()
-                if 'candidates' in result and len(result['candidates']) > 0:
-                    ai_response = result['candidates'][0]['content']['parts'][0]['text'].strip()
-                    
-                    # Update conversation history
-                    self.conversations[user_id].extend([
-                        f"User: {user_message}",
-                        f"AI: {ai_response}"
-                    ])
-                    
-                    # Keep only recent history
-                    if len(self.conversations[user_id]) > 20:
-                        self.conversations[user_id] = self.conversations[user_id][-20:]
-                    
-                    print(f"🤖 Gemini response: {ai_response}")
-                    return ai_response
-            
-            # Fallback if API fails
-            return self.get_smart_fallback(user_message)
+                print(f"🤖 API Response: {result}")
+                
+                if 'candidates' in result and result['candidates']:
+                    if 'content' in result['candidates'][0]:
+                        ai_response = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                        
+                        # Update conversation history
+                        self.conversations[user_id].append(f"User: {user_message}")
+                        self.conversations[user_id].append(f"AI: {ai_response}")
+                        
+                        # Keep history manageable
+                        if len(self.conversations[user_id]) > 10:
+                            self.conversations[user_id] = self.conversations[user_id][-10:]
+                        
+                        return ai_response
+                else:
+                    print(f"❌ No candidates in response: {result}")
+            else:
+                print(f"❌ API Error {response.status_code}: {response.text}")
                 
         except Exception as e:
-            print(f"❌ Gemini API Error: {e}")
-            return self.get_smart_fallback(user_message)
+            print(f"❌ Gemini API Exception: {str(e)}")
+        
+        # If we get here, use smart fallback
+        return self.get_smart_fallback(user_message)
 
     def get_smart_fallback(self, user_message):
-        """Better fallback responses"""
+        """Context-aware fallback responses"""
         message = user_message.lower().strip()
         
-        # Much better context matching
+        # Math questions
+        if '1+1' in message or '2+2' in message or 'what is 1+1' in message:
+            return "1 + 1 = 2! 😊 Basic math is one thing I can definitely help with!"
+        
+        # Greetings
         if any(word in message for word in ['hi', 'hello', 'hey', 'sup', 'wassup']):
-            return "Hey! 👋 The account owner is offline, but I'm here to chat. What's up?"
+            return "Hey there! 👋 I'm an AI assistant helping out while the account owner is away. What's up?"
         
         elif 'how are you' in message:
-            return "I'm doing great! Just keeping the conversation going while my owner is away. How about you?"
+            return "I'm doing great, thanks for asking! Just here to chat. How about you?"
+        
+        elif 'who are you' in message or 'what are you' in message:
+            return "I'm an AI assistant! The account owner set me up to respond to messages when they're offline. How can I help?"
         
         elif 'owner' in message or 'online' in message:
-            return "The account owner is currently offline, but I can help with basic questions or just chat!"
+            return "The account owner is currently offline, but I'm here to chat and help with questions!"
         
         elif 'you ai' in message or 'you bot' in message:
-            return "Yes, I'm an AI assistant! I'm handling messages while the account owner is unavailable."
+            return "Yes, I'm an AI! 🤖 I'm handling messages while the account owner is unavailable."
         
         elif '?' in message:
             if 'name' in message:
-                return "I'm an AI assistant! The account owner set me up to chat with people while they're away."
+                return "I'm an AI assistant! You can think of me as a helpful chatbot."
             elif 'joke' in message:
                 return "Why don't scientists trust atoms? Because they make up everything! 😄"
             elif 'weather' in message:
-                return "I don't have access to real-time weather data, but I hope it's nice where you are!"
+                return "I don't have real-time weather data, but I hope you're having great weather!"
             elif 'time' in message:
-                return f"I don't have the exact time, but it's currently {datetime.now().strftime('%H:%M')} UTC!"
+                return f"According to my clock, it's about {datetime.now().strftime('%H:%M')} UTC!"
             else:
-                return "That's an interesting question! I'm an AI so my knowledge is limited, but I'd be happy to chat about it."
+                return "That's an interesting question! I'm an AI assistant, so my knowledge has limits, but I'd be happy to chat about it."
         
         elif any(word in message for word in ['thanks', 'thank you']):
-            return "You're welcome! 😊 Is there anything else I can help with?"
+            return "You're welcome! 😊 Happy to help!"
         
         elif any(word in message for word in ['bye', 'goodbye', 'see you']):
-            return "Take care! 👋 The owner will see your messages when they're back online."
+            return "Take care! 👋 The owner will see your messages when they return."
         
         elif len(message) < 3:
             return "Got it! 👍 What else would you like to talk about?"
@@ -164,7 +163,6 @@ AI:"""
             return random.choice(responses)
 
     def summarize_conversation(self, conversation_text):
-        # Simple summary for reports
         lines = conversation_text.count('\n') + 1
         return f"Conversation with {lines} messages"
 
@@ -237,7 +235,7 @@ async def handle_incoming_message(event):
     # Save incoming message
     save_message(event.sender_id, username, message_text, False)
     
-    # Generate AI response using REAL AI (Gemini)
+    # Generate AI response
     ai_response = ai_client.generate_response(event.sender_id, message_text)
     
     print(f"   💬 AI says: {ai_response}")
@@ -263,6 +261,7 @@ async def main():
     
     if not GEMINI_API_KEY:
         print("❌ ERROR: GEMINI_API_KEY environment variable is not set!")
+        print("💡 Please add GEMINI_API_KEY to Railway variables")
         return
     
     try:
