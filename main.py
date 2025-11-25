@@ -5,8 +5,15 @@ from datetime import datetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telegram import Bot
-import httpx
 import random
+
+# Try to import the new Google Gemini library
+try:
+    from google import genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    print("❌ google-generativeai library not available")
 
 # Your credentials
 API_ID = 26908211
@@ -83,71 +90,130 @@ Report Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
     except Exception as e:
         print(f"❌ Error sending report: {e}")
 
-# ---------------- AI Client ---------------- #
+# ---------------- AI Client with CORRECT Gemini API ---------------- #
 class GeminiAIClient:
     def __init__(self, api_key):
         self.api_key = api_key
-        self.url = f"https://generativelanguage.googleapis.com/v1beta/models/chat-bison-001:generateMessage?key={api_key}"
         self.conversations = {}
+        
+        # Initialize Gemini client if available
+        if GEMINI_AVAILABLE and api_key:
+            try:
+                self.client = genai.Client(api_key=api_key)
+                self.gemini_working = True
+                print("✅ Gemini AI Client initialized successfully")
+            except Exception as e:
+                print(f"❌ Failed to initialize Gemini client: {e}")
+                self.gemini_working = False
+        else:
+            self.gemini_working = False
+            if not GEMINI_AVAILABLE:
+                print("❌ google-generativeai library not installed")
+            if not api_key:
+                print("❌ GEMINI_API_KEY not set")
 
     async def generate_response(self, user_id, user_message):
         if user_id not in self.conversations:
             self.conversations[user_id] = []
 
-        history = self.conversations[user_id][-4:]
+        # Build conversation context
+        history = self.conversations[user_id][-4:]  # Last 2 exchanges
         history_text = "\n".join(history)
 
         prompt = f"""You are a helpful AI assistant responding to Telegram messages when the account owner is offline.
-Keep responses friendly, conversational, and concise.
+Keep responses friendly, conversational, and concise (1-2 sentences).
 
+Recent conversation:
 {history_text}
+
 User: {user_message}
 AI:"""
 
-        payload = {
-            "candidateCount": 1,
-            "temperature": 0.7,
-            "topK": 40,
-            "topP": 0.9,
-            "maxOutputTokens": 150,
-            "messages": [{"author": "user", "content": [{"type": "text", "text": prompt}]}]
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(self.url, json=payload)
-                if resp.status_code == 200:
-                    result = resp.json()
-                    print("🤖 Gemini API response:", result)
-                    if "candidates" in result and result["candidates"]:
-                        ai_text = result["candidates"][0]["content"][0]["text"].strip()
-                        self.conversations[user_id].append(f"User: {user_message}")
-                        self.conversations[user_id].append(f"AI: {ai_text}")
-                        if len(self.conversations[user_id]) > 10:
-                            self.conversations[user_id] = self.conversations[user_id][-10:]
-                        return ai_text
-                    else:
-                        return self.get_smart_fallback(user_message)
-                else:
-                    print(f"❌ API Error {resp.status_code}: {resp.text}")
-                    return self.get_smart_fallback(user_message)
-        except Exception as e:
-            print(f"❌ Gemini API Exception: {e}")
+        # Try Gemini API first if available
+        if self.gemini_working:
+            try:
+                print("🤖 Calling Gemini API with genai.Client...")
+                response = self.client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=prompt
+                )
+                ai_text = response.text.strip()
+                
+                # Update conversation history
+                self.conversations[user_id].append(f"User: {user_message}")
+                self.conversations[user_id].append(f"AI: {ai_text}")
+                
+                # Keep history manageable
+                if len(self.conversations[user_id]) > 10:
+                    self.conversations[user_id] = self.conversations[user_id][-10:]
+                
+                print(f"🤖 Gemini response: {ai_text}")
+                return ai_text
+                
+            except Exception as e:
+                print(f"❌ Gemini API call failed: {e}")
+                # Fall back to smart responses
+                return self.get_smart_fallback(user_message)
+        else:
+            # Use smart fallback if Gemini not available
             return self.get_smart_fallback(user_message)
 
     def get_smart_fallback(self, user_message):
         message = user_message.lower().strip()
+        
+        # Math questions
         if '1+1' in message or '2+2' in message or 'what is 1+1' in message:
-            return "1 + 1 = 2! 😊"
-        elif any(word in message for word in ['hi', 'hello', 'hey']):
-            return "Hey there! 👋 I'm here while the owner is away."
+            return "1 + 1 = 2! 😊 Basic math is something I can definitely help with!"
+        
+        # Greetings
+        if any(word in message for word in ['hi', 'hello', 'hey', 'sup', 'wassup']):
+            return "Hey there! 👋 I'm an AI assistant helping out while the account owner is away. What's up?"
+        
+        elif 'how are you' in message:
+            return "I'm doing great, thanks for asking! Just here to chat. How about you?"
+        
+        elif 'who are you' in message or 'what are you' in message:
+            return "I'm an AI assistant! The account owner set me up to respond to messages when they're offline."
+        
+        elif 'owner' in message or 'online' in message:
+            return "The account owner is currently offline, but I'm here to chat and help with questions!"
+        
+        elif 'you ai' in message or 'you bot' in message:
+            return "Yes, I'm an AI! 🤖 I'm handling messages while the account owner is unavailable."
+        
+        # Specific questions
+        elif 'donald trump' in message:
+            return "Donald Trump is a former US President and businessman. He served as the 45th president from 2017 to 2021."
+        
         elif '?' in message:
-            return "That's an interesting question! I'm an AI assistant."
+            if 'name' in message:
+                return "I'm an AI assistant! You can think of me as a helpful chatbot."
+            elif 'joke' in message:
+                return "Why don't scientists trust atoms? Because they make up everything! 😄"
+            elif 'weather' in message:
+                return "I don't have real-time weather data, but I hope you're having great weather!"
+            elif 'time' in message:
+                return f"According to my clock, it's about {datetime.now().strftime('%H:%M')} UTC!"
+            else:
+                return "That's an interesting question! I'm an AI assistant, so my knowledge has limits, but I'd be happy to chat about it."
+        
+        elif any(word in message for word in ['thanks', 'thank you']):
+            return "You're welcome! 😊 Happy to help!"
+        
+        elif any(word in message for word in ['bye', 'goodbye', 'see you']):
+            return "Take care! 👋 The owner will see your messages when they return."
+        
+        elif len(message) < 3:
+            return "Got it! 👍 What else would you like to talk about?"
+        
         else:
+            # More engaging default responses
             responses = [
-                "I see! Tell me more.",
-                "Interesting! What else?",
-                "Thanks for sharing! 😊"
+                "I see what you're saying! What are your thoughts on that?",
+                "That's interesting! Tell me more about that.",
+                "Thanks for sharing! What's been on your mind lately?",
+                "I appreciate the message! Is there anything specific you'd like to chat about?",
+                "That's cool! I'm here to keep you company while the owner is away."
             ]
             return random.choice(responses)
 
@@ -171,13 +237,13 @@ async def handle_incoming_message(event):
     username = user.username or user.first_name or f"User{event.sender_id}"
     message_text = event.message.text
     print(f"📩 New message from {username}: {message_text}")
-    print(f"🤖 AI responding to {username}")
+    print(f"   🤖 AI responding to {username}")
 
     save_message(event.sender_id, username, message_text, False)
 
     # Generate AI response
     ai_response = await ai_client.generate_response(event.sender_id, message_text)
-    print(f"💬 AI says: {ai_response}")
+    print(f"   💬 AI says: {ai_response}")
 
     await event.reply(f"`{ai_response}`", parse_mode='markdown')
     save_message(event.sender_id, username, ai_response, True)
@@ -209,7 +275,7 @@ async def main():
 
     print("\n" + "="*50)
     print("🤖 AI Assistant ACTIVE for your personal Telegram!")
-    print("💬 Using Google Gemini chat-bison-001 AI for intelligent responses")
+    print("💬 Using Google Gemini 1.5 Flash AI for intelligent responses")
     print("📊 You'll receive summaries via @Dr_assistbot")
     print("="*50 + "\n")
 
