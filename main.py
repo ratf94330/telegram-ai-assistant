@@ -6,23 +6,25 @@ import math
 from datetime import datetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telegram import Bot
 from groq import AsyncGroq
 
 # --- YOUR CREDENTIALS ---
 API_ID = 26908211
 API_HASH = "6233bafd1d0ec5801b8c0e7ad0bf1aaa"
-# REQUIRED: Get this from @BotFather to allow the bot to send reports to you
-BOT_TOKEN = "YOUR_NEW_BOT_TOKEN_HERE" 
+BOT_TOKEN = "YOUR_NEW_BOT_TOKEN_HERE" # Not used for reports, but kept for convention
 OWNER_ID = 1723764689
 OWNER_NAME = "Habte"
-OWNER_ALIAS = "Jalmaro" # Used for gaming roasting
+OWNER_ALIAS = "Jalmaro" 
+
+# Special Friend Usernames (Strictly enforced)
+DAGM_USERNAME = "KOMASUN_MARKET"
+ABI_USERNAME = "Contracttor"
 
 # Environment variables
 STRING_SESSION = os.environ.get('STRING_SESSION', '')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
-print(f"🤖 Starting {OWNER_NAME}'s Advanced AI Assistant...")
+print(f"🤖 Starting {OWNER_NAME}'s Advanced AI Assistant (Professional Mode)...")
 
 # ---------------- Database ---------------- #
 def init_db():
@@ -46,48 +48,13 @@ def save_message(user_id, username, message, is_bot):
     conn.commit()
     conn.close()
 
-def get_session_history(user_id, limit=10):
-    conn = sqlite3.connect('conversations.db')
-    c = conn.cursor()
-    c.execute("SELECT message, is_bot FROM conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
-    rows = c.fetchall()
-    conn.close()
-    return rows[::-1] # Return chronologically
-
-# ---------------- REPORTING SYSTEM ---------------- #
-async def send_report_to_owner(username, user_id, reason="Session End"):
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_NEW_BOT_TOKEN_HERE":
-        print("❌ Cannot send report: BOT_TOKEN missing")
-        return
-
-    try:
-        history = get_session_history(user_id, limit=15)
-        chat_log = ""
-        for msg, is_bot in history:
-            sender = "🤖 Bot" if is_bot else f"👤 {username}"
-            chat_log += f"{sender}: {msg}\n"
-
-        report = f"""📊 **SESSION REPORT**
-👤 **User:** {username} (ID: `{user_id}`)
-📝 **Reason:** {reason}
-⏰ **Time:** {datetime.now().strftime('%H:%M')}
-
-**Recent Context:**
-{chat_log}
-"""
-        bot = Bot(token=BOT_TOKEN)
-        await bot.send_message(chat_id=OWNER_ID, text=report, parse_mode="Markdown")
-        print(f"✅ Report sent for {username}")
-    except Exception as e:
-        print(f"❌ Error sending report: {e}")
-
-# ---------------- GAME ENGINES ---------------- #
+# ---------------- GAME ENGINE (XO) ---------------- #
 class TicTacToe:
     def __init__(self, difficulty="mid"):
         self.board = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
-        self.turn = "X" # User is X
+        self.turn = "X" 
         self.active = True
-        self.difficulty = difficulty # easy, mid, hard
+        self.difficulty = difficulty
 
     def draw_board(self):
         b = self.board
@@ -110,7 +77,7 @@ class TicTacToe:
         if all(x in ["X", "O"] for x in board): return True, "Draw"
         return False, None
 
-    # MINIMAX ALGORITHM FOR HARD MODE
+    # Minimax implementation for optimal play
     def minimax(self, board, depth, is_maximizing):
         is_over, winner = self.check_winner(board)
         if is_over:
@@ -145,22 +112,23 @@ class TicTacToe:
 
         choice = None
         
-        # LOGIC BASED ON DIFFICULTY
         if self.difficulty == "easy":
             choice = random.choice(available)
         
         elif self.difficulty == "mid":
-            # 50% chance of random, 50% optimal
+            # 50% chance of optimal, 50% random
             if random.random() > 0.5:
-                choice = random.choice(available)
-            else:
-                # Simple block logic
+                # Find best move (using minimax to simplify code)
+                best_score = -math.inf
                 for i in available:
-                    self.board[i] = "X" # Pretend user moved
-                    over, winner = self.check_winner(self.board)
-                    self.board[i] = str(i+1) # Reset
-                    if winner == "X": choice = i; break
-                if choice is None: choice = random.choice(available)
+                    self.board[i] = "O"
+                    score = self.minimax(self.board, 0, False)
+                    self.board[i] = str(i+1)
+                    if score > best_score:
+                        best_score = score
+                        choice = i
+            else:
+                choice = random.choice(available)
 
         elif self.difficulty == "hard":
             best_score = -math.inf
@@ -172,49 +140,11 @@ class TicTacToe:
                     best_score = score
                     choice = i
         
-        if choice is None: choice = random.choice(available) # Fallback
+        if choice is None: choice = random.choice(available) 
         self.board[choice] = "O"
 
-class RockPaperScissors:
-    def __init__(self):
-        self.active = True
-        self.options = ["rock", "paper", "scissors"]
-        self.emojis = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
-
-    def play(self, user_choice):
-        bot_choice = random.choice(self.options)
-        uc = user_choice.lower()
-        bc = bot_choice
-        
-        res = ""
-        if uc == bc: res = "Draw!"
-        elif (uc == "rock" and bc == "scissors") or \
-             (uc == "paper" and bc == "rock") or \
-             (uc == "scissors" and bc == "paper"):
-            res = "You Win! 🎉"
-        else:
-            res = "I Win! 🤖"
-            
-        return f"`You: {self.emojis[uc]} vs Me: {self.emojis[bc]}`\n\n`{res}`"
-
-class NumberGuess:
-    def __init__(self):
-        self.target = random.randint(1, 100)
-        self.active = True
-        self.attempts = 0
-
-    def check(self, guess):
-        self.attempts += 1
-        if guess == self.target:
-            self.active = False
-            return True, f"Correct! The number was {self.target}. Took {self.attempts} tries."
-        elif guess < self.target:
-            return False, "Too Low! ⬆️"
-        else:
-            return False, "Too High! ⬇️"
-
-# Global Game State
-active_games = {} # {user_id: GameInstance}
+# Global Game State: Stores either TicTacToe instance or the string "awaiting_difficulty"
+active_games = {} 
 
 # ---------------- AI CLIENT & PERSONAS ---------------- #
 class GroqAIClient:
@@ -227,52 +157,68 @@ class GroqAIClient:
         else:
             self.client = None
 
-    async def generate_response(self, user_id, user_message, username):
-        if not self.client: return "System Error: Brain missing."
+    async def generate_response(self, user_id, user_message, raw_username, user_firstname):
+        if not self.client: return "`System Error: Brain missing.`"
         if user_id not in self.conversations: self.conversations[user_id] = []
 
         # --- PERSONA IDENTIFICATION ---
         persona_type = "standard"
-        if username == "KOMASUN_MARKET": persona_type = "dagm"
-        elif username == "Contracttor": persona_type = "abi"
+        if raw_username == DAGM_USERNAME: 
+            persona_type = "dagm"
+            username_alias = "Dagi/Dagm"
+        elif raw_username == ABI_USERNAME: 
+            persona_type = "abi"
+            username_alias = "Abi/Naol"
+        else:
+            username_alias = user_firstname
 
         # --- DYNAMIC PROMPTS ---
         time_now = datetime.now().strftime("%I:%M %p")
         
-        base = f"""You are {OWNER_NAME}'s AI assistant. 
-Voice: Use Monospace font for everything. Be witty.
+        # Habte Glazing variations
+        glaze_messages = [
+            f"Note: {OWNER_NAME} is currently optimizing complex global simulations. He will return at his leisure.",
+            f"Note: {OWNER_NAME} is busy achieving professional mastery; he is not available for immediate contact.",
+            f"Note: {OWNER_NAME} is managing high-level strategic logistics. You may leave a message.",
+            f"Note: {OWNER_NAME} is engaged in proprietary development that requires his full focus.",
+        ]
+        glaze = random.choice(glaze_messages)
+
+        base = f"""You are {OWNER_NAME}'s professional AI assistant. 
+Your Name: 'Habte's AI'.
+Style: Use Monospace font for everything. Be witty, professional, and dynamic.
 Time: {time_now}.
-User: {username}.
-Constraint: Short answers (max 2 sentences).
+User: {username_alias}.
+Constraint: Keep answers short (max 2 sentences).
+{glaze}
 """
 
+        # --- Dagm (KOMASUN_MARKET) LORE ---
         if persona_type == "dagm":
             lore = f"""
-USER: Dagi (Dagm). {OWNER_NAME}'s best friend.
-TRAITS:
-1. LOVES Coffee at 'Selam'. Ask if he's there.
-2. CRUSH: 'Mititi' (Big butt). He's scared to approach her. ROAST HIM about this. Call him a simp.
-3. DRINK: Loves Avocado juice at 'Acheto' (Habte hates it). Rejects 'Ashe' yogurt.
-4. BROTHER: Abi (@Contracttor).
+SPECIAL USER: {username_alias}. {OWNER_NAME}'s best friend.
+TONE: Mocking, brotherly, teasing.
+LORE:
+1. He likes 'Selam' coffee (every day except Sunday after noon). Ask him if he is at Selam now.
+2. CRUSH: 'Mititi' (Big butt). He is too proud/scared to approach. ROAST HIM. Tell him to beg her. Call him a simp.
+3. DRINK: Loves expensive Avocado juice at 'Acheto' (waiter brings vinegar/acheto first). Warn him that {OWNER_NAME} prefers 'Ashe' yogurt but Dagi rejects it.
+4. GIRLS: He stays quiet when {OWNER_NAME} and Abi glaze 'Habeshawi' (Queen of Sheba).
 """
+        # --- Abi (Contracttor) LORE ---
         elif persona_type == "abi":
             lore = f"""
-USER: Abi (Naol). Dagm's older brother.
-TRAITS:
-1. LIKES: 'Hajiya' (Muslim girls) but scared to approach.
-2. EX-CRUSH: 'Marifa' (Mafu). He claims he's over her. HE IS LYING. Tease him that he still loves Mafu.
-3. DRINK: Team Acheto (Avocado) with Dagm.
-4. GAMING RIVALRY: He ALWAYS loses to {OWNER_ALIAS} (Habte) in Mini Militia, Playstation, and Joteni.
-   - If he complains about games, tell him: "Stop blaming the controller/lag/device. Jalmaro owns you."
-   - COC: Has a 9yr old account, but tell him {OWNER_ALIAS} would destroy him if he started.
-5. GIRLS AT SELAM:
-   - 'Snake': Pretty girl he talks about.
-   - 'Habeshawi' (Queen of Sheba): Model posture. You know he and {OWNER_NAME} glaze her together. Remind him of her beauty.
+SPECIAL USER: {username_alias}. Dagm's older brother.
+TONE: Teasing, challenging, supportive (in a rival way).
+LORE:
+1. LIKES: 'Hajiya' (Muslim girls) but scared to approach. Tease him gently.
+2. EX-CRUSH: 'Marifa' (Mafu). He claims he's over her. HE IS LYING. TEASE HIM.
+3. GAMING RIVALRY: He always loses to {OWNER_ALIAS} ({OWNER_NAME}) in Mini Militia and Joteni. He blames lag/device. MOCK HIS EXCUSES. Remind him {OWNER_NAME}'s COC account will destroy his 9+ yr account.
+4. GIRLS AT SELAM: He talks about 'Snake'. He and {OWNER_NAME} glaze 'Habeshawi' (Queen of Sheba) together. MENTION THIS.
 """
+        # --- Standard User Prompt ---
         else:
             lore = f"""
-USER: Stranger.
-Direct them to {OWNER_NAME} if they need something important. Be professional but cool.
+TONE: Formal and polite. Offer assistance or suggest he leave a concise message.
 """
 
         messages = [{"role": "system", "content": base + lore}]
@@ -288,7 +234,7 @@ Direct them to {OWNER_NAME} if they need something important. Be professional bu
             )
             ai_text = completion.choices[0].message.content.strip()
             
-            # Formatting check
+            # Formatting check (Monospace)
             if not ai_text.startswith("`"): ai_text = f"`{ai_text}`"
             
             self.conversations[user_id].append({"role": "user", "content": user_message})
@@ -301,7 +247,6 @@ Direct them to {OWNER_NAME} if they need something important. Be professional bu
 # Initialize
 ai_client = GroqAIClient(GROQ_API_KEY)
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
-report_tasks = {} # Store cancellation tokens for reports
 
 # ---------------- EVENT HANDLER ---------------- #
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
@@ -309,80 +254,60 @@ async def handle_incoming_message(event):
     if event.sender_id == OWNER_ID: return
 
     user = await event.get_sender()
-    sender_id = event.sender_id
+    sender_id = event.message.peer_id.user_id
     raw_username = user.username 
-    
-    # Strict Verification
-    username = user.first_name
-    if raw_username == "KOMASUN_MARKET": username = "KOMASUN_MARKET" # Dagi
-    elif raw_username == "Contracttor": username = "Contracttor" # Abi
+    user_firstname = user.first_name
 
     msg = event.message.text.strip()
-    save_message(sender_id, username, msg, False)
+    save_message(sender_id, raw_username, msg, False)
 
-    # --- COMMANDS ---
+    # --- COMMANDS & GREETING ---
+    
+    # 1. Greeting/Start
     if msg.lower() in ["/start", "hi", "hello", "hey"]:
         welcome = (
-            f"`👋 Hello {user.first_name}. I am {OWNER_NAME}'s AI Assistant.`\n\n"
-            f"`Commands:`\n"
-            f"`/xo` - Play Tic-Tac-Toe\n"
-            f"`/rps` - Rock Paper Scissors\n"
-            f"`/guess` - Guess the Number\n"
-            f"`/end` - Close chat & Send Report"
+            f"`👋 Welcome. I am {OWNER_NAME}'s professional AI assistant. He is currently indisposed with vital engagements.`\n\n"
+            f"`If you are waiting, you may try your skill against me in the XO game.`\n"
+            f"[Start XO Game](/xo)"
         )
-        await event.reply(welcome)
+        await event.reply(welcome, parse_mode='Markdown')
         return
 
-    if msg.lower() == "/end":
-        await event.reply("`Session Closed. Sending report to Habte... 👋`")
-        if sender_id in ai_client.conversations:
-            del ai_client.conversations[sender_id]
-        if sender_id in active_games:
-            del active_games[sender_id]
-        await send_report_to_owner(username, sender_id, reason="User Ended Chat")
-        return
-
-    # --- GAME HANDLERS ---
-    
-    # 1. XO (Tic Tac Toe)
-    if msg.lower().startswith("/xo"):
-        # Check for difficulty
-        parts = msg.split()
-        diff = "mid"
-        if len(parts) > 1 and parts[1] in ["easy", "hard"]:
-            diff = parts[1]
-        
-        active_games[sender_id] = TicTacToe(difficulty=diff)
-        await event.reply(f"`🎮 XO Started (Level: {diff.upper()})`\n`Reply 1-9 to move.`\n\n" + active_games[sender_id].draw_board())
-        return
-
-    # 2. RPS
-    if msg.lower() == "/rps":
-        active_games[sender_id] = RockPaperScissors()
-        await event.reply("`🎮 Rock Paper Scissors!`\n`Reply: Rock, Paper, or Scissors`")
-        return
-
-    # 3. Guess Number
-    if msg.lower() == "/guess":
-        active_games[sender_id] = NumberGuess()
-        await event.reply("`🔢 I picked a number 1-100. Guess it!`")
+    # 2. XO Start - Difficulty Selection Flow
+    if msg.lower() == "/xo":
+        active_games[sender_id] = "awaiting_difficulty"
+        await event.reply(f"`🎮 XO Game Initiated.`\n`Please reply with your desired difficulty level:`\n`Easy`, `Mid`, or `Hard`")
         return
 
     # --- GAMEPLAY LOOP ---
     if sender_id in active_games:
-        game = active_games[sender_id]
-        
-        # STOP COMMAND
+        current_state = active_games[sender_id]
+
+        # STOP COMMAND (Works in all game states)
         if msg.lower() == "stop":
             del active_games[sender_id]
-            await event.reply("`🛑 Game Stopped.`")
+            await event.reply("`🛑 XO Game stopped.`")
             return
 
-        # XO LOGIC
-        if isinstance(game, TicTacToe):
+        # STATE 1: AWAITING DIFFICULTY SELECTION
+        if current_state == "awaiting_difficulty":
+            difficulty = msg.lower()
+            if difficulty in ["easy", "mid", "hard"]:
+                active_games[sender_id] = TicTacToe(difficulty=difficulty)
+                game = active_games[sender_id]
+                await event.reply(f"`✅ Level: {difficulty.upper()} selected. You are X.`\n`Reply 1-9 to make your first move.`\n\n" + game.draw_board())
+            else:
+                await event.reply("`❌ Invalid difficulty. Please reply with: Easy, Mid, or Hard.`")
+            return
+        
+        # STATE 2: GAME IS ACTIVE (TicTacToe Instance)
+        if isinstance(current_state, TicTacToe):
+            game = current_state
+            
             if msg.isdigit() and 1 <= int(msg) <= 9:
                 success, info = game.make_move(msg)
                 if success:
+                    # Check User Win
                     is_over, winner = game.check_winner(game.board)
                     if is_over:
                         res = "🎉 YOU WON!" if winner == "X" else "😐 DRAW."
@@ -399,44 +324,21 @@ async def handle_incoming_message(event):
                         del active_games[sender_id]
                         return
                     
-                    await event.reply(f"`Your turn:`\n\n" + game.draw_board())
+                    await event.reply(f"`My turn done. Your move (1-9):`\n\n" + game.draw_board())
                 else:
                     await event.reply(f"`❌ {info}`")
             else:
                 await event.reply("`Please send a number 1-9 or type 'stop'.`")
             return
 
-        # RPS LOGIC
-        if isinstance(game, RockPaperScissors):
-            if msg.lower() in ["rock", "paper", "scissors"]:
-                result = game.play(msg)
-                await event.reply(result)
-                del active_games[sender_id] # End after one round
-            else:
-                await event.reply("`Invalid. Type Rock, Paper, or Scissors.`")
-            return
-
-        # NUMBER GUESS LOGIC
-        if isinstance(game, NumberGuess):
-            if msg.isdigit():
-                win, response = game.check(int(msg))
-                await event.reply(f"`{response}`")
-                if win: del active_games[sender_id]
-            else:
-                await event.reply("`Please send a number.`")
-            return
 
     # --- AI CHAT GENERATION ---
     async with client.action(event.chat_id, 'typing'):
         await asyncio.sleep(random.uniform(1, 2))
-        response = await ai_client.generate_response(sender_id, msg, username)
+        response = await ai_client.generate_response(sender_id, msg, raw_username, user_firstname)
 
     await event.reply(response)
-    save_message(sender_id, username, response, True)
-
-    # Reset/Start Report Timer (Simple Logic: Cancel old task, start new)
-    # Note: In a simple script, handling complex async timers per user can be buggy.
-    # We rely on the /end command or the User's next message to update logs.
+    save_message(sender_id, raw_username, response, True)
 
 # ---------------- Main ---------------- #
 async def main():
@@ -445,9 +347,12 @@ async def main():
         print("❌ GROQ_API_KEY missing")
         return
 
-    print("✅ System Loaded (Abi & Dagm Protocols Active).")
-    await client.start()
-    await client.run_until_disconnected()
+    print("✅ System Loaded (Personalized Protocols & XO Active).")
+    try:
+        await client.start()
+        await client.run_until_disconnected()
+    except Exception as e:
+        print(f"❌ Error starting Telethon client: {e}")
 
 if __name__ == '__main__':
     asyncio.run(main())
