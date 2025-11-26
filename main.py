@@ -4,14 +4,15 @@ import sqlite3
 import random
 import math
 from datetime import datetime
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from groq import AsyncGroq
 
 # --- YOUR CREDENTIALS ---
 API_ID = 26908211
 API_HASH = "6233bafd1d0ec5801b8c0e7ad0bf1aaa"
-BOT_TOKEN = "YOUR_NEW_BOT_TOKEN_HERE" # Not used for reports, but kept for convention
+# BOT_TOKEN is required for client.send_message
+BOT_TOKEN = "YOUR_NEW_BOT_TOKEN_HERE" 
 OWNER_ID = 1723764689
 OWNER_NAME = "Habte"
 OWNER_ALIAS = "Jalmaro" 
@@ -24,7 +25,12 @@ ABI_USERNAME = "Contracttor"
 STRING_SESSION = os.environ.get('STRING_SESSION', '')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
-print(f"🤖 Starting {OWNER_NAME}'s Advanced AI Assistant (Professional Mode)...")
+# Global States
+# State tracking for menu navigation and chat modes
+user_states = {} # {user_id: 'MENU' | 'CHAT' | 'LEAVE_MESSAGE' | 'XO_DIFFICULTY' | 'XO_PLAYING'}
+active_games = {} # {user_id: TicTacToeInstance}
+
+print(f"🤖 Starting {OWNER_NAME}'s Advanced AI Assistant (Menu System Active)...")
 
 # ---------------- Database ---------------- #
 def init_db():
@@ -50,6 +56,7 @@ def save_message(user_id, username, message, is_bot):
 
 # ---------------- GAME ENGINE (XO) ---------------- #
 class TicTacToe:
+    # Existing TicTacToe class remains the same for game logic (omitted for brevity)
     def __init__(self, difficulty="mid"):
         self.board = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
         self.turn = "X" 
@@ -84,7 +91,6 @@ class TicTacToe:
             if winner == "O": return 10 - depth
             if winner == "X": return depth - 10
             return 0
-
         if is_maximizing:
             best_score = -math.inf
             for i in range(9):
@@ -116,9 +122,7 @@ class TicTacToe:
             choice = random.choice(available)
         
         elif self.difficulty == "mid":
-            # 50% chance of optimal, 50% random
             if random.random() > 0.5:
-                # Find best move (using minimax to simplify code)
                 best_score = -math.inf
                 for i in available:
                     self.board[i] = "O"
@@ -143,10 +147,8 @@ class TicTacToe:
         if choice is None: choice = random.choice(available) 
         self.board[choice] = "O"
 
-# Global Game State: Stores either TicTacToe instance or the string "awaiting_difficulty"
-active_games = {} 
-
 # ---------------- AI CLIENT & PERSONAS ---------------- #
+# (GroqAIClient class remains unchanged - omitted for brevity)
 class GroqAIClient:
     def __init__(self, api_key):
         self.api_key = api_key
@@ -244,101 +246,204 @@ TONE: Formal and polite. Offer assistance or suggest he leave a concise message.
         except Exception as e:
             return f"`Error: {str(e)}`"
 
-# Initialize
 ai_client = GroqAIClient(GROQ_API_KEY)
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
-# ---------------- EVENT HANDLER ---------------- #
+# ---------------- MENU FUNCTIONS ---------------- #
+
+def get_main_menu_keyboard():
+    return client.build_reply_markup([
+        [Button.inline("💬 Chat With Assistant", data="chat")],
+        [Button.inline("🎮 Play XO Game", data="xo")],
+        [Button.inline("📨 Leave a Message for Habte", data="message")],
+        [Button.inline("🔙 Close Menu", data="close")]
+    ])
+
+def get_chat_keyboard():
+    return client.build_reply_markup([
+        [Button.inline("🔙 Back to Menu", data="back_to_menu")]
+    ])
+
+def get_xo_difficulty_keyboard():
+    return client.build_reply_markup([
+        [Button.inline("Easy", data="xo_easy"), Button.inline("Mid", data="xo_mid"), Button.inline("Hard", data="xo_hard")],
+        [Button.inline("🔙 Back to Menu", data="back_to_menu")]
+    ])
+
+async def show_main_menu(entity, message_id=None):
+    user_id = entity.id
+    user_states[user_id] = 'MENU'
+    
+    text = (
+        f"**Welcome**\n"
+        f"I am {OWNER_NAME}'s professional AI assistant — here to help you, guide you, or simply talk while he is busy handling top-priority engagements."
+    )
+    
+    if message_id:
+        # Edit the existing message if possible (e.g., coming back from a submenu)
+        await client.edit_message(entity, message_id, text, buttons=get_main_menu_keyboard(), parse_mode='md')
+    else:
+        # Send a new message (e.g., from /start)
+        await client.send_message(entity, text, buttons=get_main_menu_keyboard(), parse_mode='md')
+    
+    # Clear active games or conversation history upon return to menu
+    if user_id in active_games: del active_games[user_id]
+    if user_id in ai_client.conversations: del ai_client.conversations[user_id]
+
+
+# ---------------- INLINE BUTTON HANDLER ---------------- #
+
+@client.on(events.CallbackQuery)
+async def callback_handler(event):
+    data = event.data.decode('utf-8')
+    user_id = event.sender_id
+    
+    await event.delete() # Remove button message to clean up the chat
+
+    # --- MAIN MENU NAVIGATION ---
+    
+    if data == "back_to_menu":
+        await show_main_menu(event.peer_id)
+        return
+
+    elif data == "close":
+        await client.send_message(event.peer_id, "`❌ Menu closed. Use /start to reopen.`")
+        user_states[user_id] = 'CLOSED'
+        return
+
+    # --- STATE TRANSITIONS ---
+    
+    elif data == "chat":
+        user_states[user_id] = 'CHAT'
+        await client.send_message(event.peer_id, 
+                                  "`💬 Chat Mode Activated. Type your message below. The AI is listening.`",
+                                  buttons=get_chat_keyboard())
+        return
+
+    elif data == "message":
+        user_states[user_id] = 'LEAVE_MESSAGE'
+        await client.send_message(event.peer_id, 
+                                  "`📨 Please type the message you wish to leave for Habte. I will forward it to him directly.`",
+                                  buttons=get_chat_keyboard()) # Using chat keyboard for "Back"
+        return
+
+    elif data == "xo":
+        user_states[user_id] = 'XO_DIFFICULTY'
+        await client.send_message(event.peer_id, 
+                                  "`🎮 XO Game Initiated. Please select your desired difficulty level:`",
+                                  buttons=get_xo_difficulty_keyboard())
+        return
+
+    # --- XO DIFFICULTY SELECTION ---
+    
+    elif data.startswith("xo_"):
+        difficulty = data.split('_')[1]
+        
+        # Start the game instance
+        active_games[user_id] = TicTacToe(difficulty=difficulty)
+        user_states[user_id] = 'XO_PLAYING'
+        game = active_games[user_id]
+        
+        await client.send_message(event.peer_id, 
+                                  f"`✅ Level: {difficulty.upper()} selected. You are X.`\n`Reply with a number 1-9 to make your first move.`\n\n" + game.draw_board())
+        return
+    
+    await event.answer("Unknown command.")
+
+
+# ---------------- NEW MESSAGE HANDLER (Text Input) ---------------- #
+
 @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
 async def handle_incoming_message(event):
-    if event.sender_id == OWNER_ID: return
+    if event.sender_id == OWNER_ID: return # Ignore owner's messages
 
     user = await event.get_sender()
     sender_id = event.message.peer_id.user_id
     raw_username = user.username 
     user_firstname = user.first_name
-
     msg = event.message.text.strip()
+
+    # Get user state or default to MENU if unknown
+    state = user_states.get(sender_id, 'MENU')
     save_message(sender_id, raw_username, msg, False)
 
-    # --- COMMANDS & GREETING ---
+    # --- STATE HANDLERS ---
     
-    # 1. Greeting/Start
-    if msg.lower() in ["/start", "hi", "hello", "hey"]:
-        welcome = (
-            f"`👋 Welcome. I am {OWNER_NAME}'s professional AI assistant. He is currently indisposed with vital engagements.`\n\n"
-            f"`If you are waiting, you may try your skill against me in the XO game.`\n"
-            f"[Start XO Game](/xo)"
-        )
-        await event.reply(welcome, parse_mode='Markdown')
+    # 1. Menu Trigger (Only /start)
+    if msg.lower() == "/start":
+        # Delete the previous menu message if it exists (Telethon handles this implicitly by sending new)
+        await show_main_menu(event.peer_id)
         return
 
-    # 2. XO Start - Difficulty Selection Flow
-    if msg.lower() == "/xo":
-        active_games[sender_id] = "awaiting_difficulty"
-        await event.reply(f"`🎮 XO Game Initiated.`\n`Please reply with your desired difficulty level:`\n`Easy`, `Mid`, or `Hard`")
+    # 2. Leaving a Message for Habte
+    if state == 'LEAVE_MESSAGE':
+        # Forward the message to the owner
+        message_to_forward = f"📬 **New Message for Habte**\nFrom: {user_firstname} (@{raw_username or 'N/A'})\n\n---\n{msg}"
+        try:
+            await client.send_message(OWNER_ID, message_to_forward, parse_mode='md')
+            response = "`Message received and forwarded to Habte's inbox. Thank you for your correspondence.`"
+        except Exception:
+            response = "`Error: Could not forward the message. Habte's network connection may be offline.`"
+        
+        await event.reply(response)
+        await show_main_menu(event.peer_id) # Transition back to menu
         return
 
-    # --- GAMEPLAY LOOP ---
-    if sender_id in active_games:
-        current_state = active_games[sender_id]
-
-        # STOP COMMAND (Works in all game states)
+    # 3. XO Gameplay
+    if state == 'XO_PLAYING' and sender_id in active_games:
+        game = active_games[sender_id]
+        
         if msg.lower() == "stop":
             del active_games[sender_id]
-            await event.reply("`🛑 XO Game stopped.`")
+            user_states[sender_id] = 'MENU'
+            await event.reply("`🛑 XO Game stopped. Returning to Main Menu...`")
+            await show_main_menu(event.peer_id)
             return
 
-        # STATE 1: AWAITING DIFFICULTY SELECTION
-        if current_state == "awaiting_difficulty":
-            difficulty = msg.lower()
-            if difficulty in ["easy", "mid", "hard"]:
-                active_games[sender_id] = TicTacToe(difficulty=difficulty)
-                game = active_games[sender_id]
-                await event.reply(f"`✅ Level: {difficulty.upper()} selected. You are X.`\n`Reply 1-9 to make your first move.`\n\n" + game.draw_board())
+        if msg.isdigit() and 1 <= int(msg) <= 9:
+            success, info = game.make_move(msg)
+            if success:
+                is_over, winner = game.check_winner(game.board)
+                if is_over:
+                    res = "🎉 YOU WON!" if winner == "X" else "😐 DRAW."
+                    await event.reply(f"`{res}`\n\n" + game.draw_board())
+                    del active_games[sender_id]
+                    await show_main_menu(event.peer_id)
+                    return
+                
+                # Bot Move
+                game.bot_move()
+                is_over, winner = game.check_winner(game.board)
+                if is_over:
+                    res = "🤖 I WON!" if winner == "O" else "😐 DRAW."
+                    await event.reply(f"`{res}`\n\n" + game.draw_board())
+                    del active_games[sender_id]
+                    await show_main_menu(event.peer_id)
+                    return
+                
+                await event.reply(f"`My turn done. Your move (1-9) or type 'stop':`\n\n" + game.draw_board())
             else:
-                await event.reply("`❌ Invalid difficulty. Please reply with: Easy, Mid, or Hard.`")
-            return
+                await event.reply(f"`❌ {info}`")
+        else:
+            await event.reply("`Please send a number 1-9 or type 'stop'.`")
+        return
         
-        # STATE 2: GAME IS ACTIVE (TicTacToe Instance)
-        if isinstance(current_state, TicTacToe):
-            game = current_state
-            
-            if msg.isdigit() and 1 <= int(msg) <= 9:
-                success, info = game.make_move(msg)
-                if success:
-                    # Check User Win
-                    is_over, winner = game.check_winner(game.board)
-                    if is_over:
-                        res = "🎉 YOU WON!" if winner == "X" else "😐 DRAW."
-                        await event.reply(f"`{res}`\n\n" + game.draw_board())
-                        del active_games[sender_id]
-                        return
-                    
-                    # Bot Move
-                    game.bot_move()
-                    is_over, winner = game.check_winner(game.board)
-                    if is_over:
-                        res = "🤖 I WON!" if winner == "O" else "😐 DRAW."
-                        await event.reply(f"`{res}`\n\n" + game.draw_board())
-                        del active_games[sender_id]
-                        return
-                    
-                    await event.reply(f"`My turn done. Your move (1-9):`\n\n" + game.draw_board())
-                else:
-                    await event.reply(f"`❌ {info}`")
-            else:
-                await event.reply("`Please send a number 1-9 or type 'stop'.`")
-            return
+    # 4. AI Chat Mode
+    if state == 'CHAT':
+        async with client.action(event.chat_id, 'typing'):
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            response = await ai_client.generate_response(sender_id, msg, raw_username, user_firstname)
+        
+        # Add the 'Back to Menu' button to every chat response
+        await event.reply(response, buttons=get_chat_keyboard())
+        save_message(sender_id, raw_username, response, True)
+        return
 
+    # 5. Default/Invalid State Catch (If user types something outside of a known state)
+    if state in ['MENU', 'CLOSED', 'XO_DIFFICULTY'] or state not in user_states:
+        await event.reply("`I'm currently focused on the menu system. Please use the buttons or type /start to access the main menu.`")
+        return
 
-    # --- AI CHAT GENERATION ---
-    async with client.action(event.chat_id, 'typing'):
-        await asyncio.sleep(random.uniform(1, 2))
-        response = await ai_client.generate_response(sender_id, msg, raw_username, user_firstname)
-
-    await event.reply(response)
-    save_message(sender_id, raw_username, response, True)
 
 # ---------------- Main ---------------- #
 async def main():
@@ -347,8 +452,10 @@ async def main():
         print("❌ GROQ_API_KEY missing")
         return
 
-    print("✅ System Loaded (Personalized Protocols & XO Active).")
+    print("✅ System Loaded (Menu System Operational).")
     try:
+        # Note: If running as a user account, you might need to handle the BOT_TOKEN
+        # to ensure the client connects properly. For a dedicated bot, use BotFather token here.
         await client.start()
         await client.run_until_disconnected()
     except Exception as e:
