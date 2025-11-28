@@ -27,7 +27,7 @@ GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 # Media Paths
 ASSETS_DIR = "assets"
 
-print(f"🤖 Starting {OWNER_NAME}'s Advanced AI Assistant (v2.0 - Audacity Upgrade)...")
+print(f"🤖 Starting {OWNER_NAME}'s Advanced AI Assistant (v2.1 - Fix Applied)...")
 
 # ---------------- Database ---------------- #
 def init_db():
@@ -52,21 +52,27 @@ def save_message(user_id, username, message, is_bot):
     conn.close()
 
 # ---------------- MEDIA & RATE LIMIT HELPER ---------------- #
-async def safe_reply(event, message=None, file=None):
-    """Handles Telegram FloodWait errors automatically."""
+async def safe_reply(event, message=None, file=None, **kwargs):
+    """
+    Handles Telegram FloodWait errors automatically.
+    Accepts **kwargs to pass 'parse_mode', 'buttons', etc.
+    """
     try:
         if file:
-            await event.reply(message, file=file)
+            await event.reply(message, file=file, **kwargs)
         else:
-            await event.reply(message)
+            await event.reply(message, **kwargs)
     except errors.FloodWaitError as e:
         print(f"⚠️ FloodWait triggered. Sleeping for {e.seconds} seconds.")
         await asyncio.sleep(e.seconds)
         # Retry once
-        if file:
-            await event.reply(message, file=file)
-        else:
-            await event.reply(message)
+        try:
+            if file:
+                await event.reply(message, file=file, **kwargs)
+            else:
+                await event.reply(message, **kwargs)
+        except Exception as e:
+            print(f"❌ Retry failed: {e}")
     except Exception as e:
         print(f"❌ Error sending message: {e}")
 
@@ -192,7 +198,7 @@ class GroqAIClient:
             self.client = None
 
     async def generate_response(self, user_id, user_message, raw_username, user_firstname):
-        if not self.client: return "`System Error: Brain missing.`"
+        if not self.client: return "`System Error: Brain missing.`", "standard"
         if user_id not in self.conversations: self.conversations[user_id] = []
 
         # --- PERSONA IDENTIFICATION ---
@@ -316,6 +322,7 @@ async def handle_incoming_message(event):
         elif raw_username == ABI_USERNAME:
             chosen_msg = f"`Abi, stop blaming lag.`\n\n{chosen_msg}"
 
+        # FIX: The safe_reply function now accepts **kwargs, so this works now.
         await safe_reply(event, chosen_msg, parse_mode='Markdown')
         return
 
