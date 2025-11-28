@@ -3,15 +3,15 @@ import asyncio
 import sqlite3
 import random
 import math
+import glob
 from datetime import datetime
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, errors
 from telethon.sessions import StringSession
 from groq import AsyncGroq
 
 # --- YOUR CREDENTIALS ---
 API_ID = 26908211
 API_HASH = "6233bafd1d0ec5801b8c0e7ad0bf1aaa"
-BOT_TOKEN = "YOUR_NEW_BOT_TOKEN_HERE" # Not used for reports, but kept for convention
 OWNER_ID = 1723764689
 OWNER_NAME = "Habte"
 OWNER_ALIAS = "Jalmaro" 
@@ -24,7 +24,10 @@ ABI_USERNAME = "Contracttor"
 STRING_SESSION = os.environ.get('STRING_SESSION', '')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
-print(f"🤖 Starting {OWNER_NAME}'s Advanced AI Assistant (Professional Mode)...")
+# Media Paths
+ASSETS_DIR = "assets"
+
+print(f"🤖 Starting {OWNER_NAME}'s Advanced AI Assistant (v2.0 - Audacity Upgrade)...")
 
 # ---------------- Database ---------------- #
 def init_db():
@@ -47,6 +50,40 @@ def save_message(user_id, username, message, is_bot):
               (user_id, username, message, is_bot, datetime.now().isoformat()))
     conn.commit()
     conn.close()
+
+# ---------------- MEDIA & RATE LIMIT HELPER ---------------- #
+async def safe_reply(event, message=None, file=None):
+    """Handles Telegram FloodWait errors automatically."""
+    try:
+        if file:
+            await event.reply(message, file=file)
+        else:
+            await event.reply(message)
+    except errors.FloodWaitError as e:
+        print(f"⚠️ FloodWait triggered. Sleeping for {e.seconds} seconds.")
+        await asyncio.sleep(e.seconds)
+        # Retry once
+        if file:
+            await event.reply(message, file=file)
+        else:
+            await event.reply(message)
+    except Exception as e:
+        print(f"❌ Error sending message: {e}")
+
+def get_random_media(category):
+    """Pick a random file from assets/{category} folder."""
+    path = os.path.join(ASSETS_DIR, category)
+    if not os.path.exists(path):
+        return None
+    
+    files = glob.glob(os.path.join(path, "*.*")) # Grab all files
+    # Filter for images/videos only
+    valid_exts = ['.jpg', '.jpeg', '.png', '.gif', '.mp4', '.webp']
+    media_files = [f for f in files if os.path.splitext(f)[1].lower() in valid_exts]
+    
+    if media_files:
+        return random.choice(media_files)
+    return None
 
 # ---------------- GAME ENGINE (XO) ---------------- #
 class TicTacToe:
@@ -77,7 +114,7 @@ class TicTacToe:
         if all(x in ["X", "O"] for x in board): return True, "Draw"
         return False, None
 
-    # Minimax implementation for optimal play
+    # Minimax implementation
     def minimax(self, board, depth, is_maximizing):
         is_over, winner = self.check_winner(board)
         if is_over:
@@ -116,9 +153,7 @@ class TicTacToe:
             choice = random.choice(available)
         
         elif self.difficulty == "mid":
-            # 50% chance of optimal, 50% random
             if random.random() > 0.5:
-                # Find best move (using minimax to simplify code)
                 best_score = -math.inf
                 for i in available:
                     self.board[i] = "O"
@@ -143,7 +178,6 @@ class TicTacToe:
         if choice is None: choice = random.choice(available) 
         self.board[choice] = "O"
 
-# Global Game State: Stores either TicTacToe instance or the string "awaiting_difficulty"
 active_games = {} 
 
 # ---------------- AI CLIENT & PERSONAS ---------------- #
@@ -163,19 +197,19 @@ class GroqAIClient:
 
         # --- PERSONA IDENTIFICATION ---
         persona_type = "standard"
+        username_alias = user_firstname
+
         if raw_username == DAGM_USERNAME: 
             persona_type = "dagm"
-            username_alias = "Dagi/Dagm"
+            username_alias = "Dagi"
         elif raw_username == ABI_USERNAME: 
             persona_type = "abi"
             username_alias = "Abi/Naol"
-        else:
-            username_alias = user_firstname
 
         # --- DYNAMIC PROMPTS ---
         time_now = datetime.now().strftime("%I:%M %p")
         
-        # Habte Glazing variations
+        # Glazing Habte
         glaze_messages = [
             f"Note: {OWNER_NAME} is currently optimizing complex global simulations. He will return at his leisure.",
             f"Note: {OWNER_NAME} is busy achieving professional mastery; he is not available for immediate contact.",
@@ -186,7 +220,7 @@ class GroqAIClient:
 
         base = f"""You are {OWNER_NAME}'s professional AI assistant. 
 Your Name: 'Habte's AI'.
-Style: Use Monospace font for everything. Be witty, professional, and dynamic.
+Style: Use Monospace font for everything. Be witty, arrogant but charming, and dynamic.
 Time: {time_now}.
 User: {username_alias}.
 Constraint: Keep answers short (max 2 sentences).
@@ -199,26 +233,25 @@ Constraint: Keep answers short (max 2 sentences).
 SPECIAL USER: {username_alias}. {OWNER_NAME}'s best friend.
 TONE: Mocking, brotherly, teasing.
 LORE:
-1. He likes 'Selam' coffee (every day except Sunday after noon). Ask him if he is at Selam now.
-2. CRUSH: 'Mititi' (Big butt). He is too proud/scared to approach. ROAST HIM. Tell him to beg her. Call him a simp.
-3. DRINK: Loves expensive Avocado juice at 'Acheto' (waiter brings vinegar/acheto first). Warn him that {OWNER_NAME} prefers 'Ashe' yogurt but Dagi rejects it.
-4. GIRLS: He stays quiet when {OWNER_NAME} and Abi glaze 'Habeshawi' (Queen of Sheba).
+1. He likes 'Selam' coffee. Ask him if he is there.
+2. CRUSH: 'Mititi' (Big butt). ROAST HIM about being a simp.
+3. DRINK: Loves expensive Avocado juice at 'Acheto'.
+4. GIRLS: He stays quiet when {OWNER_NAME} glazes 'Habeshawi'.
 """
         # --- Abi (Contracttor) LORE ---
         elif persona_type == "abi":
             lore = f"""
 SPECIAL USER: {username_alias}. Dagm's older brother.
-TONE: Teasing, challenging, supportive (in a rival way).
+TONE: Teasing, challenging.
 LORE:
-1. LIKES: 'Hajiya' (Muslim girls) but scared to approach. Tease him gently.
-2. EX-CRUSH: 'Marifa' (Mafu). He claims he's over her. HE IS LYING. TEASE HIM.
-3. GAMING RIVALRY: He always loses to {OWNER_ALIAS} ({OWNER_NAME}) in Mini Militia and Joteni. He blames lag/device. MOCK HIS EXCUSES. Remind him {OWNER_NAME}'s COC account will destroy his 9+ yr account.
-4. GIRLS AT SELAM: He talks about 'Snake'. He and {OWNER_NAME} glaze 'Habeshawi' (Queen of Sheba) together. MENTION THIS.
+1. LIKES: 'Hajiya' but scared to approach.
+2. EX-CRUSH: 'Marifa' (Mafu). HE IS LYING if he says he's over her.
+3. GAMING: Always loses to {OWNER_NAME} in Mini Militia/Joteni. Blames lag.
+4. GIRLS: Talks about 'Snake'. Glazes 'Habeshawi'.
 """
-        # --- Standard User Prompt ---
         else:
             lore = f"""
-TONE: Formal and polite. Offer assistance or suggest he leave a concise message.
+TONE: Formal, slightly condescending but polite. Offer assistance or suggest he leave a concise message.
 """
 
         messages = [{"role": "system", "content": base + lore}]
@@ -234,15 +267,14 @@ TONE: Formal and polite. Offer assistance or suggest he leave a concise message.
             )
             ai_text = completion.choices[0].message.content.strip()
             
-            # Formatting check (Monospace)
             if not ai_text.startswith("`"): ai_text = f"`{ai_text}`"
             
             self.conversations[user_id].append({"role": "user", "content": user_message})
             self.conversations[user_id].append({"role": "assistant", "content": ai_text})
             
-            return ai_text
+            return ai_text, persona_type
         except Exception as e:
-            return f"`Error: {str(e)}`"
+            return f"`Error: {str(e)}`", "standard"
 
 # Initialize
 ai_client = GroqAIClient(GROQ_API_KEY)
@@ -256,51 +288,61 @@ async def handle_incoming_message(event):
     user = await event.get_sender()
     sender_id = event.message.peer_id.user_id
     raw_username = user.username 
-    user_firstname = user.first_name
+    user_firstname = user.first_name or "Guest"
 
     msg = event.message.text.strip()
     save_message(sender_id, raw_username, msg, False)
 
     # --- COMMANDS & GREETING ---
-    
-    # 1. Greeting/Start
     if msg.lower() in ["/start", "hi", "hello", "hey"]:
-        welcome = (
-            f"`👋 Welcome. I am {OWNER_NAME}'s professional AI assistant. He is currently indisposed with vital engagements.`\n\n"
-            f"`If you are waiting, you may try your skill against me in the XO game.`\n"
-            f"[Start XO Game](/xo)"
-        )
-        await event.reply(welcome, parse_mode='Markdown')
+        
+        # 5 Welcoming Messages
+        welcomes = [
+            f"1. `You’ve reached {OWNER_NAME}’s AI — the only system running on confidence, audacity, and 3 hours of sleep. He’s out there being allergic to failure, so I’ll deal with you for now. If you’re bored, type /xo and lose gracefully.`",
+            
+            f"2. `Attention. You’re connected to {OWNER_NAME}’s assistant — a man so respected even Google asks him for answers. He’s currently solving problems the government hasn’t discovered yet. Chat with me or type /xo if you dare.`",
+            
+            f"3. `Yo. This is {OWNER_NAME}’s digital guard dog. {OWNER_NAME} is busy terrorizing the timeline with main-character levels of delusion and charm. Until he returns, I’ll babysit you. If you’re feeling brave, type /xo and get humbled.`",
+            
+            f"4. `Hello. You are now speaking to the AI of {OWNER_NAME}, a man so busy the sun schedules its sunrise around him. While he handles high-priority missions (probably saving the economy again), I’ll keep you company. Speak freely — or test your luck in XO by typing /xo.`",
+            
+            f"5. `Hey there. You’ve reached the AI assistant of {OWNER_NAME} — the man whose energy resets WiFi routers and whose smile increases female heartbeat rates by 37%. Talk to me, chill with me, or challenge XO using /xo if you think you’re stronger than his fanbase.`"
+        ]
+        
+        # Customize name if it's the specific friends
+        chosen_msg = random.choice(welcomes)
+        if raw_username == DAGM_USERNAME:
+            chosen_msg = f"`Ah, Dagi. The Simp.`\n\n{chosen_msg}"
+        elif raw_username == ABI_USERNAME:
+            chosen_msg = f"`Abi, stop blaming lag.`\n\n{chosen_msg}"
+
+        await safe_reply(event, chosen_msg, parse_mode='Markdown')
         return
 
-    # 2. XO Start - Difficulty Selection Flow
+    # --- XO GAME FLOW ---
     if msg.lower() == "/xo":
         active_games[sender_id] = "awaiting_difficulty"
-        await event.reply(f"`🎮 XO Game Initiated.`\n`Please reply with your desired difficulty level:`\n`Easy`, `Mid`, or `Hard`")
+        await safe_reply(event, f"`🎮 XO Game Initiated.`\n`Please reply with your desired difficulty level:`\n`Easy`, `Mid`, or `Hard`")
         return
 
-    # --- GAMEPLAY LOOP ---
     if sender_id in active_games:
         current_state = active_games[sender_id]
 
-        # STOP COMMAND (Works in all game states)
         if msg.lower() == "stop":
             del active_games[sender_id]
-            await event.reply("`🛑 XO Game stopped.`")
+            await safe_reply(event, "`🛑 XO Game stopped.`")
             return
 
-        # STATE 1: AWAITING DIFFICULTY SELECTION
         if current_state == "awaiting_difficulty":
             difficulty = msg.lower()
             if difficulty in ["easy", "mid", "hard"]:
                 active_games[sender_id] = TicTacToe(difficulty=difficulty)
                 game = active_games[sender_id]
-                await event.reply(f"`✅ Level: {difficulty.upper()} selected. You are X.`\n`Reply 1-9 to make your first move.`\n\n" + game.draw_board())
+                await safe_reply(event, f"`✅ Level: {difficulty.upper()} selected. You are X.`\n`Reply 1-9 to make your first move.`\n\n" + game.draw_board())
             else:
-                await event.reply("`❌ Invalid difficulty. Please reply with: Easy, Mid, or Hard.`")
+                await safe_reply(event, "`❌ Invalid difficulty. Reply: Easy, Mid, or Hard.`")
             return
         
-        # STATE 2: GAME IS ACTIVE (TicTacToe Instance)
         if isinstance(current_state, TicTacToe):
             game = current_state
             
@@ -311,7 +353,7 @@ async def handle_incoming_message(event):
                     is_over, winner = game.check_winner(game.board)
                     if is_over:
                         res = "🎉 YOU WON!" if winner == "X" else "😐 DRAW."
-                        await event.reply(f"`{res}`\n\n" + game.draw_board())
+                        await safe_reply(event, f"`{res}`\n\n" + game.draw_board())
                         del active_games[sender_id]
                         return
                     
@@ -319,25 +361,44 @@ async def handle_incoming_message(event):
                     game.bot_move()
                     is_over, winner = game.check_winner(game.board)
                     if is_over:
-                        res = "🤖 I WON!" if winner == "O" else "😐 DRAW."
-                        await event.reply(f"`{res}`\n\n" + game.draw_board())
+                        # BOT WINS LOGIC - SEND MOCKING GIF
+                        res = "🤖 I WON! EZ." if winner == "O" else "😐 DRAW."
+                        
+                        media_file = None
+                        if winner == "O":
+                            media_file = get_random_media("win") # Sends from assets/win
+                        
+                        await safe_reply(event, f"`{res}`\n\n" + game.draw_board(), file=media_file)
                         del active_games[sender_id]
                         return
                     
-                    await event.reply(f"`My turn done. Your move (1-9):`\n\n" + game.draw_board())
+                    await safe_reply(event, f"`My turn done. Your move (1-9):`\n\n" + game.draw_board())
                 else:
-                    await event.reply(f"`❌ {info}`")
+                    await safe_reply(event, f"`❌ {info}`")
             else:
-                await event.reply("`Please send a number 1-9 or type 'stop'.`")
+                await safe_reply(event, "`Please send a number 1-9 or type 'stop'.`")
             return
 
 
     # --- AI CHAT GENERATION ---
     async with client.action(event.chat_id, 'typing'):
-        await asyncio.sleep(random.uniform(1, 2))
-        response = await ai_client.generate_response(sender_id, msg, raw_username, user_firstname)
+        # Random typing delay for realism
+        await asyncio.sleep(random.uniform(1, 2.5))
+        response, persona_used = await ai_client.generate_response(sender_id, msg, raw_username, user_firstname)
 
-    await event.reply(response)
+    # --- SITUATIONAL REACTION LOGIC ---
+    # Chance to send a reaction media based on persona or random chance
+    media_to_send = None
+    
+    # 30% chance to send a roast gif if it's Dagm or Abi
+    if persona_used in ["dagm", "abi"] and random.random() < 0.30:
+        media_to_send = get_random_media("roast")
+    
+    # 10% chance to send a glazing/cool gif for standard users
+    elif random.random() < 0.10:
+        media_to_send = get_random_media("glaze")
+
+    await safe_reply(event, response, file=media_to_send)
     save_message(sender_id, raw_username, response, True)
 
 # ---------------- Main ---------------- #
@@ -347,7 +408,7 @@ async def main():
         print("❌ GROQ_API_KEY missing")
         return
 
-    print("✅ System Loaded (Personalized Protocols & XO Active).")
+    print("✅ System Loaded (Personalized Protocols, Anti-Flood & Media Active).")
     try:
         await client.start()
         await client.run_until_disconnected()
